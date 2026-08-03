@@ -1,0 +1,1526 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>振り返りポータル</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+
+  <!-- ========================================================================
+       振り返りポータル — ミニマル／中立デザイン × GAS バックエンド
+       ・見た目：白基調・1pxの淡い罫線・アクセント1色・余白と文字で階層を作る
+               （全校種・全教科で使える中立トーン。マスコットや装飾は置かない）
+       ・中身  ：Code.js（GAS）のサーバー関数はそのまま（Code.js 無変更）
+       ・google.script.run が無い環境（ローカルで直接開く）では
+         モックデータで「デモ表示中」としてデザイン確認できる
+       構成: ①CSS ②データ層(GAS/mock)＋キャッシュ ③目標と振り返り ④一覧/みんな ⑤一括返信 ⑥管理 ⑦本体
+       ======================================================================== -->
+
+  <style>
+/* ============================== ① スタイル（ミニマル） ============================== */
+:root{
+  /* ベース */
+  --bg:#FAFAFA; --surface:#FFFFFF; --surface-2:#F6F7F8;
+  --text:#1D2125; --text-2:#5B6470; --text-3:#8C949F;
+  --border:#E6E8EB; --border-2:#D3D7DC;
+  --accent:#2E6E68; --accent-dark:#245A55; --accent-soft:#EFF5F4;
+  --danger:#A8443A; --warn:#8A6524; --warn-soft:#FAF6EE;
+  --r:8px; --r-sm:6px;
+  --shadow:0 1px 2px rgba(20,25,30,.04), 0 1px 3px rgba(20,25,30,.03);
+
+  /* 旧トークン別名（インラインstyleが参照するため維持） */
+  --ink:#1D2125; --ink2:#5B6470; --pen:#2E6E68; --red:#A8443A;
+  --green:#2E6E68; --mark:#EFF5F4; --markp:#EFF5F4; --paper:#FAFAFA;
+  --line:#E6E8EB; --brown:#8A6524; --hard:#8A6524;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:'Noto Sans JP',system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;
+  color:var(--text); background:var(--bg); font-size:15px; line-height:1.75;
+  -webkit-font-smoothing:antialiased; -webkit-tap-highlight-color:transparent;
+  font-feature-settings:'palt' 1;
+}
+.hand{font-family:inherit;}
+button{font-family:inherit;cursor:pointer;}
+b{font-weight:700;}
+
+/* ── app shell ── */
+.app{position:relative;min-height:100vh;display:flex;flex-direction:column;}
+/* 体験版の案内バー（GASが無いデモ環境でのみ表示） */
+.demobar{background:var(--accent);color:#fff;font-size:13.5px;line-height:1.7;
+  padding:11px 32px;text-align:center;}
+.demobar b{font-weight:700;}
+@media (max-width:760px){ .demobar{padding:10px 16px;font-size:12.5px;text-align:left;} }
+.bar{display:flex;align-items:center;gap:14px;padding:16px 32px;border-bottom:1px solid var(--border);
+  background:rgba(255,255,255,.88);backdrop-filter:blur(8px);position:sticky;top:0;z-index:30;flex-wrap:wrap;}
+.crest{width:34px;height:34px;border:1px solid var(--border-2);border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;
+  background:var(--surface);color:var(--accent);flex:none;}
+.crest svg{display:block;}
+.bar-title{font-size:17px;font-weight:700;line-height:1.4;letter-spacing:.02em;}
+.bar-sub{font-size:11.5px;color:var(--text-3);line-height:1.4;letter-spacing:.02em;}
+.bar-tag{font-size:12px;border:1px solid var(--border);padding:3px 10px;border-radius:999px;color:var(--text-2);background:var(--surface);}
+.bar-spacer{margin-left:auto;}
+
+.shell{display:flex;gap:36px;padding:32px 32px 88px;max-width:1440px;width:100%;margin:0 auto;flex:1;}
+.rail{width:204px;flex:none;display:flex;flex-direction:column;gap:2px;position:sticky;top:96px;align-self:flex-start;}
+.rail-head{font-size:11px;font-weight:500;color:var(--text-3);letter-spacing:.14em;margin:0 0 10px 12px;text-transform:uppercase;}
+.nav{display:flex;align-items:center;gap:10px;padding:9px 12px;font-size:14px;color:var(--text-2);
+  border:1px solid transparent;border-radius:var(--r-sm);background:transparent;text-align:left;transition:background .12s,color .12s;width:100%;}
+.nav .i{width:18px;height:18px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:currentColor;}
+.nav .i svg{display:block;}
+.nav:hover{color:var(--text);background:var(--surface-2);}
+.nav.on{color:var(--accent);background:var(--accent-soft);font-weight:500;}
+.rail-foot{margin-top:18px;padding:11px 12px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);}
+.rail-foot span{font-size:11.5px;color:var(--text-3);line-height:1.6;}
+
+.content{flex:1;min-width:0;}
+.page-h{font-size:24px;font-weight:700;letter-spacing:.01em;margin:0 0 6px;line-height:1.4;}
+.page-sub{font-size:13.5px;color:var(--text-2);margin:0 0 26px;line-height:1.85;}
+
+/* ── card ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  padding:22px 24px;position:relative;box-shadow:var(--shadow);margin-bottom:16px;}
+.lbl{font-size:14px;font-weight:500;margin-bottom:14px;display:flex;align-items:center;gap:10px;letter-spacing:.01em;}
+.lbl.accent{color:var(--accent);}
+.lbl.warn{color:var(--warn);}
+.no{width:22px;height:22px;border:1px solid var(--border-2);border-radius:50%;color:var(--text-2);font-size:11px;font-weight:500;
+  display:flex;align-items:center;justify-content:center;flex:none;line-height:1;}
+.mark{background:var(--accent-soft);border-radius:3px;padding:1px 5px;}
+
+.row{display:flex;gap:12px;flex-wrap:wrap;}
+.sel{flex:1;min-width:200px;position:relative;}
+.sel select{width:100%;border:1px solid var(--border-2);border-radius:var(--r-sm);background:var(--surface);padding:10px 34px 10px 12px;
+  font-family:inherit;font-size:14px;color:var(--text);appearance:none;cursor:pointer;line-height:1.5;transition:border-color .12s;}
+.sel select:hover{border-color:var(--text-3);}
+.sel select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.sel select:disabled{opacity:.5;cursor:not-allowed;background:var(--surface-2);}
+.sel::after{content:'';position:absolute;right:14px;top:50%;width:7px;height:7px;margin-top:-5px;pointer-events:none;
+  border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(45deg);}
+
+.q-area{border:1px solid var(--border-2);border-radius:var(--r-sm);padding:12px 14px;min-height:96px;font-family:inherit;font-size:14.5px;
+  line-height:1.85;background:var(--surface);width:100%;color:var(--text);outline:none;resize:vertical;transition:border-color .12s;}
+.q-area::placeholder{color:var(--text-3);}
+.q-area:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+
+/* ── button ── */
+.btn{border:1px solid var(--border-2);border-radius:var(--r-sm);background:var(--surface);font-family:inherit;font-size:14px;font-weight:500;
+  padding:10px 18px;transition:background .12s,border-color .12s,color .12s;color:var(--text);display:inline-flex;align-items:center;gap:8px;line-height:1.4;}
+.btn:hover{background:var(--surface-2);border-color:var(--text-3);}
+.btn:active{background:#EDEFF1;}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-soft);}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn.primary:hover{background:var(--accent-dark);border-color:var(--accent-dark);}
+.btn.green{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn.green:hover{background:var(--accent-dark);border-color:var(--accent-dark);}
+.btn.blue{background:var(--surface);border-color:var(--accent);color:var(--accent);}
+.btn.blue:hover{background:var(--accent-soft);}
+.btn.ghost{border-color:var(--border);color:var(--text-2);background:transparent;}
+.btn.ghost:hover{background:var(--surface-2);border-color:var(--border-2);color:var(--text);}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.btn.lg{font-size:15px;padding:12px 26px;}
+.btn.sm{font-size:13px;padding:7px 13px;}
+
+.pill{border:1px solid var(--border);border-radius:999px;padding:5px 13px;font-size:12.5px;background:var(--surface);color:var(--text-2);
+  white-space:nowrap;display:inline-flex;align-items:center;gap:8px;}
+.pill.flat{border-color:transparent;background:var(--surface-2);}
+.chip{font-size:11.5px;border:1px solid var(--border);border-radius:4px;padding:2px 8px;background:var(--surface-2);color:var(--text-2);white-space:nowrap;}
+
+/* ── 目標と振り返り：左フォーム＋右リファレンスパネル ── */
+.goal-grid{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:32px;align-items:start;}
+/* ── 本時のゴール（先生が単元マスタに登録／第N時を選ぶと表示） ── */
+.honji-goal{border-color:var(--accent);background:var(--accent-soft);box-shadow:none;}
+.honji-goal-text{font-size:17px;font-weight:500;line-height:1.8;color:var(--text);white-space:pre-wrap;padding:2px 0 0;}
+.honji-goal-hint{margin-top:12px;font-size:12.5px;color:var(--accent);}
+/* ── 保存完了のチェックマーク演出（円→レ点の順に線が描かれる） ── */
+.savecheck{width:26px;height:26px;flex:none;}
+.savecheck circle{stroke:var(--accent);stroke-width:2;fill:none;stroke-dasharray:76;stroke-dashoffset:76;}
+.savecheck path{stroke:var(--accent);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:26;stroke-dashoffset:26;}
+.savecheck.on circle{animation:sc-draw .45s ease forwards;}
+.savecheck.on path{animation:sc-draw .3s .35s ease forwards;}
+@keyframes sc-draw{to{stroke-dashoffset:0;}}
+@media (prefers-reduced-motion:reduce){
+  .savecheck.on circle,.savecheck.on path{animation:none;stroke-dashoffset:0;}
+}
+.ref-wrap{position:sticky;top:96px;display:flex;flex-direction:column;gap:16px;}
+.ref-tabs{display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--border);}
+.ref-tab{flex:1;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--text-2);
+  font-family:inherit;font-size:13.5px;padding:9px 6px 10px;margin-bottom:-1px;transition:color .12s,border-color .12s;}
+.ref-tab:hover{color:var(--text);}
+.ref-tab.on{border-bottom-color:var(--accent);color:var(--accent);font-weight:500;}
+.ref-body{max-height:calc(100vh - 340px);min-height:140px;overflow-y:auto;padding-right:4px;}
+
+/* ── ヒント（右パネル上部の控えめな案内） ── */
+.hint-card{border:1px solid var(--border);border-radius:var(--r);background:var(--surface);padding:16px 18px;box-shadow:var(--shadow);}
+.hint-card h3{margin:0 0 8px;font-size:12px;font-weight:500;letter-spacing:.1em;color:var(--text-3);}
+.hint-card ul{margin:0;padding:0;list-style:none;}
+.hint-card li{font-size:12.5px;line-height:1.8;color:var(--text-2);padding-left:14px;position:relative;}
+.hint-card li::before{content:'';position:absolute;left:0;top:.85em;width:5px;height:1px;background:var(--border-2);}
+
+/* ── 振り返りカード ── */
+.rcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:13px 15px;margin-bottom:10px;}
+.rcard .who{font-size:11.5px;color:var(--text-3);margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.rcard .goal{font-size:13px;margin-bottom:6px;white-space:pre-wrap;color:var(--text-2);}
+.rcard .body{font-size:13.5px;line-height:1.85;white-space:pre-wrap;}
+.fbnote{border-left:2px solid var(--accent);background:var(--accent-soft);padding:9px 12px;margin-top:10px;border-radius:0 var(--r-sm) var(--r-sm) 0;
+  font-size:12.5px;line-height:1.8;white-space:pre-wrap;}
+.fbnote b{color:var(--accent);font-weight:500;}
+.scorebub{display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:24px;border:1px solid var(--accent);
+  border-radius:999px;color:var(--accent);font-size:11.5px;padding:0 8px;background:var(--surface);flex:none;}
+
+/* ── 一括返信 ── */
+.fb-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:12px;box-shadow:var(--shadow);}
+.fb-line{border-top:1px solid var(--border);margin-top:16px;padding-top:16px;}
+.cfgsel{border:1px solid var(--border-2);border-radius:var(--r-sm);background:var(--surface);padding:6px 26px 6px 10px;font-family:inherit;font-size:13px;
+  appearance:none;cursor:pointer;color:var(--text);}
+.cfgsel:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.cfgwrap{position:relative;display:inline-flex;align-items:center;}
+.cfgwrap::after{content:'';position:absolute;right:11px;width:6px;height:6px;margin-top:-3px;pointer-events:none;
+  border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(45deg);}
+
+/* ── table ── */
+.rec-scroll{overflow:auto;border:1px solid var(--border);border-radius:var(--r);background:var(--surface);}
+.rec-table{width:100%;border-collapse:collapse;background:var(--surface);}
+.rec-table th{font-size:11.5px;font-weight:500;color:var(--text-3);text-align:left;padding:10px 14px;background:var(--surface-2);
+  border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;letter-spacing:.04em;}
+.rec-table td{padding:9px 14px;border-bottom:1px solid var(--border);font-size:13.5px;}
+.rec-table td.c{text-align:center;}
+.rec-table tr:last-child td{border-bottom:none;}
+
+/* ── toast / banner / form ── */
+.toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%) translateY(12px);z-index:60;
+  background:var(--text);color:#fff;font-size:13.5px;padding:11px 20px;border-radius:var(--r);
+  box-shadow:0 6px 24px rgba(20,25,30,.18);opacity:0;transition:opacity .22s,transform .22s;pointer-events:none;display:flex;align-items:center;gap:9px;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.banner{border:1px solid var(--border-2);background:var(--warn-soft);border-radius:var(--r);padding:14px 16px;font-size:13.5px;
+  color:var(--text);margin-bottom:22px;line-height:1.85;}
+.ta{width:100%;border:1px solid var(--border-2);border-radius:var(--r-sm);padding:12px 14px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.7;
+  min-height:90px;background:var(--surface);outline:none;resize:vertical;color:var(--text);}
+.ta::placeholder{color:var(--text-3);}
+.ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.in{width:100%;border:1px solid var(--border-2);border-radius:var(--r-sm);padding:9px 12px;font-family:inherit;font-size:14px;
+  background:var(--surface);outline:none;color:var(--text);transition:border-color .12s;}
+.in::placeholder{color:var(--text-3);}
+.in:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+label.fld{display:block;font-size:11.5px;color:var(--text-3);margin:0 0 5px 1px;}
+.loading-screen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;}
+.spin{width:26px;height:26px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
+.empty-note{color:var(--text-3);font-size:13px;padding:14px 2px;line-height:1.85;}
+
+@keyframes spin{to{transform:rotate(360deg);}}
+
+@media (max-width:1080px){
+  .goal-grid{grid-template-columns:1fr;gap:20px;}
+  .ref-wrap{position:static;}
+  .ref-body{max-height:420px;}
+  .shell{flex-direction:column;gap:20px;}
+  .rail{width:100%;position:static;flex-direction:row;flex-wrap:wrap;gap:6px;}
+  .nav{width:auto;border:1px solid var(--border);background:var(--surface);}
+  .rail-head,.rail-foot{display:none;}
+}
+@media (max-width:640px){
+  body{font-size:14.5px;}
+  .bar{padding:12px 16px;gap:10px;}
+  .bar-title{font-size:15.5px;}
+  .shell{padding:20px 16px 64px;}
+  .card{padding:16px 16px;}
+  .fb-card{padding:14px 15px;}
+  .page-h{font-size:20px;}
+  .page-sub{font-size:13px;margin-bottom:18px;}
+  .btn.lg{width:100%;justify-content:center;}
+  .nav{font-size:13px;padding:8px 11px;}
+}
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div class="loading-screen">
+      <div class="spin"></div>
+      <div style="font-size:13.5px;color:#8C949F">読み込んでいます…</div>
+    </div>
+  </div>
+
+  <!-- React 18 + Babel -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin></script>
+
+  <!-- ============================== ② データ層（GAS / mock）＋キャッシュ ============================== -->
+  <script>
+(function () {
+  // ── GAS 呼び出しを Promise 化（無ければ mock にフォールバック） ──
+  var HAS_GAS = (typeof google !== 'undefined') && google.script && google.script.run;
+
+  function gas(name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      var r = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      r[name].apply(r, args);
+    });
+  }
+
+  var DEFAULT_GOAL_OPTIONS = 'A：例題を理解する,B：練習問題を解く,C：応用問題を解く,D：自作問題に挑戦,E：友達に説明できるようになる';
+
+  // 体験版：テストモードで「誰として見ているか」（sessionStorage・タブを閉じれば消える）
+  function _demoImpEmail() {
+    try { return sessionStorage.getItem('demo_imp') || ''; } catch (e) { return ''; }
+  }
+  // 体験版：いま画面を見ている人。テストモード中はその生徒として返す（先生に戻れる情報も持たせる）
+  function _demoUser() {
+    var as = _demoImpEmail();
+    if (!as) return mockStore.user;
+    var s = mockStore.roster.find(function (r) { return String(r.email) === as; });
+    if (!s) return mockStore.user;
+    return { email: s.email, name: s.name, isTeacher: false,
+      grade: s.grade, userClass: s.class, studentNumber: s.number,
+      realEmail: mockStore.user.email, impersonating: true };
+  }
+
+  // ── mock（ローカルでデザイン確認する用。GAS上では使われない） ──
+  var mockStore = {
+    user: { email: 'you@example.com', name: 'あなた', isTeacher: true, grade: '', userClass: '', studentNumber: '', realEmail: 'you@example.com', impersonating: false },
+    units: [
+      { key: '1-正負の数-1', chapter: 1, unit: '正負の数', lesson_no: 1, lesson_title: '正負の数', sort_order: 1 },
+      { key: '1-正負の数-3', chapter: 1, unit: '正負の数', lesson_no: 3, lesson_title: '加法と減法', sort_order: 3 },
+      { key: '2-文字の式-1', chapter: 2, unit: '文字の式', lesson_no: 1, lesson_title: '文字式の表し方', sort_order: 1, goal: '文字を使って数量を式に表せる' },
+      { key: '3-一次方程式-2', chapter: 3, unit: '一次方程式', lesson_no: 2, lesson_title: '方程式の解き方', sort_order: 2 }
+    ],
+    reflections: [
+      { id: 'r1', created_at: '2026-06-01T01:00:00Z', updated_at: '2026-06-02T01:00:00Z',
+        student_email: 'you@example.com', student_name: 'あなた', grade: 1, class: 'A', student_number: 1,
+        unit_key: '1-正負の数-3', goal_option: 'B：練習問題を解く', goal_text: '符号ミスをなくしたい', goal: 'B：練習問題を解く\n符号ミスをなくしたい',
+        reflection: '負の数どうしの足し算がスムーズにできた。引き算で符号を1回まちがえたので、次は気をつけたい。',
+        teacher_comment: '符号ミスに自分で気づけたのがすばらしい！次回は確かめ算もしてみよう。', teacher_score: '5', is_public: true },
+      { id: 'r2', created_at: '2026-06-03T01:00:00Z', updated_at: '2026-06-03T01:00:00Z',
+        student_email: 'a@example.com', student_name: 'クラスのなかま', grade: 1, class: 'A', student_number: 2,
+        unit_key: '1-正負の数-3', goal_option: 'A：例題を理解する', goal_text: '', goal: 'A：例題を理解する',
+        reflection: '数直線を使うと符号の意味がよくわかった。', teacher_comment: '', teacher_score: '', is_public: true },
+      { id: 'r3', created_at: '2026-06-05T01:00:00Z', updated_at: '2026-06-05T01:00:00Z',
+        student_email: 'you@example.com', student_name: 'あなた', grade: 1, class: 'A', student_number: 1,
+        unit_key: '2-文字の式-1', goal_option: 'C：応用問題を解く', goal_text: '', goal: 'C：応用問題を解く',
+        reflection: '文字を使った式の意味を友達に説明できた。', teacher_comment: '', teacher_score: '', is_public: true }
+    ],
+    roster: [
+      { email: 'you@example.com', grade: 1, class: 'A', number: 1, name: 'あなた' },
+      { email: 'a@example.com', grade: 1, class: 'A', number: 2, name: 'クラスのなかま' },
+      { email: 'b@example.com', grade: 1, class: 'A', number: 3, name: 'サンプル 太郎' }
+    ],
+    teachers: [{ email: 'teacher@example.com', name: 'デモ先生', subject: '数学' }],
+    settings: { portal_title: '振り返りポータル', goal_options: DEFAULT_GOAL_OPTIONS }
+  };
+  function mDelay(v) { return new Promise(function (r) { setTimeout(function () { r(JSON.parse(JSON.stringify(v))); }, 120); }); }
+  var mock = {
+    getInitialData: function () {
+      return mDelay({ user: _demoUser(), units: mockStore.units, settings: mockStore.settings,
+        classes: [{ grade: 1, class: 'A' }, { grade: 1, class: 'B' }] });
+    },
+    getMyReflections: function () {
+      var me = _demoUser().email;
+      return mDelay(mockStore.reflections
+        .filter(function (r) { return r.student_email === me; })
+        .sort(function (a, b) { return String(b.updated_at).localeCompare(String(a.updated_at)); }));
+    },
+    getClassReflections: function (unitKey) {
+      return mDelay(mockStore.reflections.filter(function (r) { return String(r.unit_key) === String(unitKey); }));
+    },
+    submitReflection: function (pl) {
+      var u = _demoUser();
+      var ex = mockStore.reflections.find(function (r) { return r.student_email === u.email && String(r.unit_key) === String(pl.unit_key); });
+      var now = new Date().toISOString();
+      var goal = [pl.goal_option, pl.goal_text].filter(function (x) { return !!x; }).join('\n');
+      if (ex) { ex.goal_option = pl.goal_option || ''; ex.goal_text = pl.goal_text || ''; ex.goal = goal; ex.reflection = pl.reflection || ''; ex.updated_at = now; return mDelay({ success: true, updated: true }); }
+      mockStore.reflections.push({ id: 'r' + Date.now(), created_at: now, updated_at: now,
+        student_email: u.email, student_name: u.name, grade: u.grade || 1, class: u.userClass || 'A', student_number: u.studentNumber || 1,
+        unit_key: pl.unit_key, goal_option: pl.goal_option || '', goal_text: pl.goal_text || '', goal: goal,
+        reflection: pl.reflection || '', teacher_comment: '', teacher_score: '', is_public: true });
+      return mDelay({ success: true, updated: false });
+    },
+    getReflectionsForLesson: function (pl) {
+      return mDelay(mockStore.reflections.filter(function (r) {
+        if (String(r.unit_key) !== String(pl.unit_key)) return false;
+        if (pl.class && String(r.class) !== String(pl.class)) return false;
+        return true;
+      }));
+    },
+    updateReflectionFeedback: function (pl) {
+      var r = mockStore.reflections.find(function (x) { return x.id === pl.id; });
+      if (r) { if (pl.comment !== undefined) r.teacher_comment = pl.comment; if (pl.score !== undefined) r.teacher_score = pl.score; }
+      return mDelay({ success: true });
+    },
+    updateReflectionFeedbackBatch: function (pl) {
+      var saved = 0;
+      (pl.items || []).forEach(function (it) {
+        var r = mockStore.reflections.find(function (x) { return x.id === it.id; });
+        if (r) { r.teacher_comment = it.comment || ''; r.teacher_score = it.score || ''; saved++; }
+      });
+      return mDelay({ success: true, saved: saved });
+    },
+    getUnitsMaster: function () { return mDelay(mockStore.units); },
+    addUnit: function () { return mDelay({ success: true }); },
+    bulkAddUnits: function () { return mDelay({ success: true, added: 0, skipped: 0, errors: [] }); },
+    deleteUnit: function () { return mDelay({ success: true }); },
+    getRoster: function () { return mDelay(mockStore.roster); },
+    getRosterClasses: function () { return mDelay([{ grade: 1, class: 'A' }, { grade: 1, class: 'B' }]); },
+    replaceRoster: function () { return mDelay({ success: true, count: 0 }); },
+    addRosterEntry: function () { return mDelay({ success: true }); },
+    deleteRosterEntry: function () { return mDelay({ success: true }); },
+    getTeachers: function () { return mDelay(mockStore.teachers); },
+    addTeacher: function () { return mDelay({ success: true }); },
+    updateSetting: function (pl) { mockStore.settings[pl.key] = pl.value; return mDelay({ success: true }); },
+    // 体験版：テストモード（生徒として見る）を実際に動かす。
+    // 本番はサーバー側に保持するが、デモはリロードを挟むので sessionStorage で保持する。
+    setImpersonation: function (email) {
+      try { sessionStorage.setItem('demo_imp', String(email || '')); } catch (e) { }
+      return mDelay({ success: true });
+    },
+    clearImpersonation: function () {
+      try { sessionStorage.removeItem('demo_imp'); } catch (e) { }
+      return mDelay({ success: true });
+    },
+    getImpersonationStatus: function () {
+      var as = _demoImpEmail();
+      return mDelay({ realEmail: 'you@example.com', isRealTeacher: true, impersonating: !!as, asEmail: as });
+    }
+  };
+
+  // 公開 API：GASがあれば本物、無ければmock
+  function call(name) {
+    if (HAS_GAS) return gas.apply(null, arguments);
+    if (mock[name]) return mock[name].apply(null, Array.prototype.slice.call(arguments, 1));
+    return Promise.reject(new Error('未実装: ' + name));
+  }
+  window.API = { call: call, HAS_GAS: HAS_GAS };
+
+  // ── クライアント側キャッシュ（サクサク切り替え用） ──
+  //  - 読み込みは原則「最初の1回」。以降はキャッシュから即返す
+  //  - 保存時は upsertMine + invalidateClass で整合を保つ
+  //  - 教師の一括返信はキャッシュしない（常にサーバーから取得）
+  window.RefCache = {
+    my: null, classByUnit: {},
+    getMy: function (force) {
+      var self = this;
+      if (!force && self.my) return Promise.resolve(self.my);
+      return window.API.call('getMyReflections').then(function (rows) { self.my = rows || []; return self.my; });
+    },
+    getClass: function (key, force) {
+      var self = this; key = String(key);
+      if (!force && self.classByUnit[key]) return Promise.resolve(self.classByUnit[key]);
+      return window.API.call('getClassReflections', key).then(function (rows) { self.classByUnit[key] = rows || []; return self.classByUnit[key]; });
+    },
+    invalidateClass: function (key) { delete this.classByUnit[String(key)]; },
+    myKeys: function () {
+      var s = {};
+      (this.my || []).forEach(function (r) { s[String(r.unit_key)] = true; });
+      return s;
+    },
+    // 保存内容を自分のキャッシュに upsert（サーバー再取得なしで一覧・右パネルに反映）
+    upsertMine: function (key, payload, user) {
+      this.my = this.my || [];
+      var goalDisplay = [payload.goal_option, payload.goal_text].filter(function (x) { return !!x; }).join('\n');
+      var now = new Date().toISOString();
+      var u = user || {};
+      var ex = this.my.find(function (r) { return String(r.unit_key) === String(key); });
+      if (ex) {
+        ex.goal_option = payload.goal_option || '';
+        ex.goal_text = payload.goal_text || '';
+        ex.goal = goalDisplay;
+        ex.reflection = payload.reflection || '';
+        ex.updated_at = now;
+      } else {
+        this.my.push({
+          id: 'local-' + now, unit_key: key,
+          goal_option: payload.goal_option || '', goal_text: payload.goal_text || '',
+          goal: goalDisplay, reflection: payload.reflection || '',
+          teacher_comment: '', teacher_score: '',
+          created_at: now, updated_at: now,
+          student_name: u.name || '', class: u.userClass || '', student_number: u.studentNumber || ''
+        });
+      }
+      this.my.sort(function (a, b) { return String(b.updated_at).localeCompare(String(a.updated_at)); });
+    }
+  };
+
+  // ── 単元のグルーピング（章×単元 → 第N時） ──
+  function groupUnits(units) {
+    var map = {}; var arr = [];
+    (units || []).forEach(function (u) {
+      var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : u.grade;
+      var k = c + '|' + u.unit;
+      if (!map[k]) { map[k] = { groupKey: k, label: '第' + c + '章 ' + u.unit, chapter: Number(c) || 0, unit: u.unit, lessons: [] }; arr.push(map[k]); }
+      map[k].lessons.push({ key: u.key, lesson_no: u.lesson_no, lesson_title: u.lesson_title || '', sort_order: Number(u.sort_order) || 0 });
+    });
+    arr.forEach(function (g) { g.lessons.sort(function (a, b) { return a.sort_order - b.sort_order || (Number(a.lesson_no) || 0) - (Number(b.lesson_no) || 0); }); });
+    arr.sort(function (a, b) { return a.chapter - b.chapter || String(a.unit).localeCompare(String(b.unit)); });
+    return arr;
+  }
+  function unitLabel(units, key) {
+    var u = (units || []).find(function (x) { return String(x.key) === String(key); });
+    if (!u) return key || '';
+    var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : u.grade;
+    return (c ? '第' + c + '章 ' : '') + (u.unit || '') + (u.lesson_no ? ' / 第' + u.lesson_no + '時' : '') + (u.lesson_title ? ' ' + u.lesson_title : '');
+  }
+  function groupKeyOf(units, lessonKey) {
+    var u = (units || []).find(function (x) { return String(x.key) === String(lessonKey); });
+    if (!u) return '';
+    var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : u.grade;
+    return c + '|' + u.unit;
+  }
+  function fmtDate(s) {
+    try { var d = new Date(s); if (isNaN(d.getTime())) return ''; return d.toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
+  }
+  function fmtDay(s) {
+    try { var d = new Date(s); if (isNaN(d.getTime())) return ''; return d.toLocaleDateString('ja-JP'); } catch (e) { return ''; }
+  }
+
+  // ── 通知（控えめなトースト1種のみ。紙吹雪などの演出は置かない） ──
+  var toastTimer = null;
+  function toast(msg, icon) {
+    var el = document.getElementById('app-toast');
+    if (!el) { el = document.createElement('div'); el.id = 'app-toast'; el.className = 'toast'; document.body.appendChild(el); }
+    el.textContent = '';
+    if (icon) { var i = document.createElement('span'); i.textContent = icon; el.appendChild(i); }
+    var m = document.createElement('span'); m.textContent = msg; el.appendChild(m);
+    requestAnimationFrame(function () { el.classList.add('show'); });
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2400);
+  }
+  // クリップボードコピー（GAS iframe で navigator.clipboard が使えない時は textarea で代替）
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).catch(function () { return copyFallback(text); });
+    }
+    return copyFallback(text);
+  }
+  function copyFallback(text) {
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        var ok = document.execCommand('copy');
+        ta.remove();
+        if (ok) resolve(); else reject(new Error('copy failed'));
+      } catch (e) { reject(e); }
+    });
+  }
+
+  window.NoteUtil = {
+    groupUnits: groupUnits, unitLabel: unitLabel, groupKeyOf: groupKeyOf,
+    fmtDate: fmtDate, fmtDay: fmtDay,
+    toast: toast, copyText: copyText,
+    DEFAULT_GOAL_OPTIONS: DEFAULT_GOAL_OPTIONS
+  };
+})();
+  </script>
+
+  <!-- ============================== ③ 目標と振り返り（生徒のメイン画面） ============================== -->
+  <script type="text/babel">
+// ── 共通：2段ドロップダウン（章×単元 → 第N時）。decorate で「✓入力済み」装飾 ──
+function UnitSelector({ groups, groupKey, lessonKey, onChange, decorate }) {
+  const g = groups.find(x => x.groupKey === groupKey);
+  const lessons = g ? g.lessons : [];
+  return (
+    <div className="row">
+      <div className="sel">
+        <select value={groupKey} onChange={(e) => onChange(e.target.value, '')}>
+          <option value="">― 単元をえらぶ ―</option>
+          {groups.map(gr => (
+            <option key={gr.groupKey} value={gr.groupKey}>
+              {gr.label}（{gr.lessons.length}時間{decorate && decorate.chapterSuffix ? decorate.chapterSuffix(gr) : ''}）
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="sel">
+        <select value={lessonKey} disabled={!groupKey} onChange={(e) => onChange(groupKey, e.target.value)}>
+          <option value="">{groupKey ? '― 第N時をえらぶ ―' : '先に単元をえらぶ'}</option>
+          {lessons.map(l => (
+            <option key={l.key} value={l.key}>
+              {decorate && decorate.lessonSuffix ? decorate.lessonSuffix(l) : ''}第{l.lesson_no}時 {l.lesson_title}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+window.UnitSelector = UnitSelector;
+
+// ── 振り返り1件のカード ──
+function RefItem({ r, head }) {
+  return (
+    <div className="rcard">
+      <div className="who">{head}</div>
+      {r.goal ? <div className="goal"><span className="mark">{r.goal}</span></div> : null}
+      {r.reflection ? <div className="body">{r.reflection}</div> : null}
+      {r.teacher_comment ? (
+        <div className="fbnote"><b>先生より </b>{r.teacher_comment}
+          {r.teacher_score !== '' && r.teacher_score != null && String(r.teacher_score) !== '' ? <span className="scorebub" style={{ marginLeft: 8 }}>{String(r.teacher_score)}点</span> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+window.RefItem = RefItem;
+
+// ── 書き方のヒント（右パネル上部。装飾ではなく実用の案内として置く） ──
+function HintCard() {
+  return (
+    <div className="hint-card">
+      <h3>書くときのヒント</h3>
+      <ul>
+        <li>目標は「できるようになりたいこと」を一つに絞る</li>
+        <li>振り返りは、わかったこと・つまずいたことを具体的に</li>
+        <li>次の時間にやりたいことまで書けると、記録がつながる</li>
+      </ul>
+    </div>
+  );
+}
+
+// ── 右リファレンスパネル：みんなの振り返り ⇔ 自分の過去 ──
+function RefPanel({ mode, setMode, lessonKey, ctx, version }) {
+  const U = window.NoteUtil;
+  const [rows, setRows] = React.useState(null);
+  const isTeacher = !!(ctx.user && ctx.user.isTeacher);
+
+  React.useEffect(() => {
+    let alive = true;
+    if (mode === 'mine') {
+      if (!window.RefCache.my) setRows(null);
+      window.RefCache.getMy().then(r => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
+    } else {
+      if (!lessonKey) { setRows([]); return; }
+      if (!window.RefCache.classByUnit[String(lessonKey)]) setRows(null);
+      window.RefCache.getClass(lessonKey).then(r => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
+    }
+    return () => { alive = false; };
+  }, [mode, lessonKey, version]);
+
+  let body;
+  if (mode === 'class' && !lessonKey) {
+    body = <div className="empty-note">左で<b>第N時</b>まで選ぶと、その授業の{isTeacher ? '全員' : '同じクラス'}の振り返りがここに表示されます。</div>;
+  } else if (rows === null) {
+    body = <div className="empty-note">読み込んでいます…</div>;
+  } else if (!rows.length) {
+    body = <div className="empty-note">{mode === 'mine' ? 'まだ過去の振り返りはありません。' : 'この授業の振り返りはまだありません。'}</div>;
+  } else if (mode === 'mine') {
+    body = (
+      <div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10 }}>新しい順・{rows.length}件</div>
+        {rows.map(r => <RefItem key={r.id} r={r} head={<span>{U.unitLabel(ctx.units, r.unit_key)}　/　{U.fmtDay(r.updated_at)}</span>} />)}
+      </div>
+    );
+  } else {
+    body = (
+      <div>
+        <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 10 }}>{rows.length}人</div>
+        {rows.map(r => (
+          <RefItem key={r.id} r={r} head={
+            <span>{r.class ? r.class + '組' : ''}{r.student_number ? ' ' + r.student_number + '番' : ''} {r.student_name || ''}</span>
+          } />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      <div className="ref-tabs">
+        <button className={'ref-tab' + (mode === 'class' ? ' on' : '')} onClick={() => setMode('class')}>みんなの振り返り</button>
+        <button className={'ref-tab' + (mode === 'mine' ? ' on' : '')} onClick={() => setMode('mine')}>自分の過去</button>
+      </div>
+      <div className="ref-body">{body}</div>
+    </div>
+  );
+}
+
+// ── 目標設定と振り返り ──
+function GoalScreen({ ctx }) {
+  const U = window.NoteUtil;
+  const { toast, groupUnits } = U;
+  const groups = React.useMemo(() => groupUnits(ctx.units), [ctx.units]);
+  const goalOpts = React.useMemo(() => (
+    String((ctx.settings && ctx.settings.goal_options) || U.DEFAULT_GOAL_OPTIONS)
+      .split(',').map(s => s.trim()).filter(Boolean)
+  ), [ctx.settings]);
+
+  const [groupKey, setGroupKey] = React.useState('');
+  const [lessonKey, setLessonKey] = React.useState('');
+  const [goalOption, setGoalOption] = React.useState('');
+  const [goalText, setGoalText] = React.useState('');
+  const [reflection, setReflection] = React.useState('');
+  const [msg, setMsg] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+  const [savedTick, setSavedTick] = React.useState(0); // 保存完了のチェックマーク演出（0=非表示）
+  const [refMode, setRefMode] = React.useState('class');   // 'class'=みんなの / 'mine'=自分の過去
+  const [refVersion, setRefVersion] = React.useState(0);
+  const [myKeys, setMyKeys] = React.useState({});
+
+  // 起動時：自分の振り返りを1回だけ読み込み（以降はキャッシュ）→ ✓装飾に使う
+  React.useEffect(() => {
+    let alive = true;
+    window.RefCache.getMy().then(() => { if (alive) setMyKeys(window.RefCache.myKeys()); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const decorate = {
+    chapterSuffix: (gr) => {
+      let n = 0; gr.lessons.forEach(l => { if (myKeys[String(l.key)]) n++; });
+      return n > 0 ? ' / 入力済み ' + n : '';
+    },
+    lessonSuffix: (l) => (myKeys[String(l.key)] ? '✓ ' : '')
+  };
+
+  // 選んだ第N時に先生が設定した「本時のゴール」（units_master の goal 列）。未設定なら何も出さない。
+  const lessonGoal = React.useMemo(() => {
+    if (!lessonKey) return '';
+    const u = (ctx.units || []).find(x => String(x.key) === String(lessonKey));
+    return u ? String(u.goal || '').trim() : '';
+  }, [lessonKey, ctx.units]);
+
+  function onSelect(gk, lk) {
+    setGroupKey(gk); setLessonKey(lk);
+    setSavedTick(0); // 授業を切り替えたら、前の保存チェックは消す
+    if (!lk) { setGoalOption(''); setGoalText(''); setReflection(''); setMsg(''); return; }
+    // 過去の入力をキャッシュから読み込んで上書き編集できるように
+    window.RefCache.getMy().then(rows => {
+      const found = (rows || []).find(r => String(r.unit_key) === String(lk));
+      if (found) {
+        setGoalOption(goalOpts.indexOf(found.goal_option) >= 0 ? found.goal_option : '');
+        setGoalText(found.goal_text || '');
+        setReflection(found.reflection || '');
+        setMsg('過去の入力を読み込みました（' + U.fmtDate(found.updated_at) + '）');
+      } else {
+        setGoalOption(''); setGoalText(''); setReflection(''); setMsg('');
+      }
+    });
+  }
+
+  function save() {
+    if (!lessonKey) { setMsg('単元・第N時 を選んでください'); return; }
+    const payload = { unit_key: lessonKey, goal_option: goalOption, goal_text: goalText, reflection: reflection };
+    setSaving(true); setMsg('保存中…');
+    window.API.call('submitReflection', payload).then(r => {
+      setSaving(false);
+      if (r && r.success) {
+        setMsg('保存しました' + (r.updated ? '（上書き）' : ''));
+        setSavedTick(t => t + 1); // 保存ボタン横にチェックマークを描画（連続保存でも再生し直す）
+        // --- キャッシュをその場で更新（再取得せず即整合） ---
+        window.RefCache.upsertMine(lessonKey, payload, ctx.user);
+        window.RefCache.invalidateClass(lessonKey);  // みんなの一覧は次に開くとき取り直す
+        setMyKeys(window.RefCache.myKeys());
+        setRefVersion(v => v + 1);  // 右パネルに反映
+      } else {
+        setMsg('保存できませんでした：' + ((r && r.error) || '不明なエラー'));
+      }
+    }).catch(err => {
+      setSaving(false); setMsg('保存に失敗しました：' + (err && err.message || err));
+    });
+  }
+
+  if (!ctx.units.length) {
+    return (
+      <div className="content">
+        <h1 className="page-h">目標と振り返り</h1>
+        <div className="banner">まだ単元マスタが登録されていません。先生は「管理者」から単元を追加してください。</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="content">
+      <h1 className="page-h">目標と振り返り</h1>
+      <p className="page-sub">単元を選んだあと、その単元の<b>第N時</b>を選びます。入力済みの授業には ✓、章には入力済みの件数が表示されます。同じ授業を選び直せば、過去の入力を上書きできます。</p>
+
+      <div className="goal-grid">
+        <div>
+          <div className="card">
+            <div className="lbl"><span className="no">1</span>単元・授業を選ぶ</div>
+            <UnitSelector groups={groups} groupKey={groupKey} lessonKey={lessonKey} onChange={onSelect} decorate={decorate} />
+          </div>
+
+          {/* 本時のゴール（先生が単元マスタに登録した goal）。第N時を選ぶと出る＝これを見て目標を決められる */}
+          {lessonGoal && (
+            <div className="card honji-goal">
+              <div className="lbl accent">本時のゴール（先生から）</div>
+              <div className="honji-goal-text">{lessonGoal}</div>
+              <div className="honji-goal-hint">このゴールに向けて、自分の目標を決めましょう。</div>
+            </div>
+          )}
+
+          <div className="card">
+            <div className="lbl"><span className="no">2</span>今日の目標（まず選ぶ）</div>
+            <div className="sel" style={{ minWidth: 0 }}>
+              <select value={goalOption} onChange={(e) => setGoalOption(e.target.value)}>
+                <option value="">（選んでください）</option>
+                {goalOpts.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div className="lbl" style={{ marginTop: 16 }}><span className="no">＋</span>目標の補足・自由記述（任意）</div>
+            <textarea className="q-area" style={{ minHeight: 60 }} value={goalText}
+              placeholder="選んだ目標についての自分の言葉での補足（例：図を使いながら理解したい）"
+              onChange={(e) => setGoalText(e.target.value)} />
+          </div>
+
+          <div className="card">
+            <div className="lbl"><span className="no">3</span>授業の振り返り（授業の最後に）</div>
+            <textarea className="q-area" style={{ minHeight: 130 }} value={reflection}
+              placeholder="今日わかったこと・できたこと、難しかったこと、次にやりたいこと など"
+              onChange={(e) => setReflection(e.target.value)} />
+            <div style={{ marginTop: 16, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button className="btn green lg" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存する'}</button>
+              {savedTick > 0 && (
+                <svg key={savedTick} className="savecheck on" viewBox="0 0 28 28" aria-hidden="true">
+                  <circle cx="14" cy="14" r="12" /><path d="M8 14.5l4 4 8-8.5" />
+                </svg>
+              )}
+              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>{msg}</span>
+            </div>
+          </div>
+
+        </div>
+
+        <div className="ref-wrap">
+          <HintCard />
+          <RefPanel mode={refMode} setMode={setRefMode} lessonKey={lessonKey} ctx={ctx} version={refVersion} />
+        </div>
+      </div>
+    </div>
+  );
+}
+window.GoalScreen = GoalScreen;
+  </script>
+
+  <!-- ============================== ④ 自分の振り返り一覧 ＋ みんなの振り返り ============================== -->
+  <script type="text/babel">
+function MineScreen({ ctx }) {
+  const U = window.NoteUtil;
+  const [rows, setRows] = React.useState(window.RefCache.my);
+
+  React.useEffect(() => {
+    let alive = true;
+    window.RefCache.getMy().then(r => { if (alive) setRows(r); }).catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, []);
+
+  if (rows === null) return <div className="content"><div className="card"><div style={{ color: 'var(--text-3)', fontSize: 13.5 }}>読み込んでいます…</div></div></div>;
+
+  return (
+    <div className="content">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+        <h1 className="page-h" style={{ margin: 0 }}>自分の振り返り一覧</h1>
+        <span className="pill">{rows.length} 件</span>
+      </div>
+      <p className="page-sub">これまでに保存した振り返りを、新しい順に表示しています。先生からのコメントもここに表示されます。</p>
+      {!rows.length ? (
+        <div className="card"><div style={{ color: 'var(--text-3)', fontSize: 13.5 }}>まだ振り返りはありません。「目標と振り返り」から記録してみましょう。</div></div>
+      ) : rows.map((r, i) => (
+        <div key={r.id} className="card" style={{ marginBottom: 16 }}>
+          <div className="who hand" style={{ fontSize: 13, color: 'var(--ink2)', marginBottom: 6 }}>
+            {U.unitLabel(ctx.units, r.unit_key)}　・　{U.fmtDate(r.updated_at)}
+          </div>
+          {r.goal ? <div style={{ marginBottom: 6, whiteSpace: 'pre-wrap' }}><span className="hand" style={{ fontSize: 13, color: 'var(--ink2)' }}>目標：</span><span className="mark">{r.goal}</span></div> : null}
+          {r.reflection ? <div style={{ fontSize: 15, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{r.reflection}</div> : null}
+          {r.teacher_comment ? (
+            <div className="fbnote" style={{ marginTop: 10 }}><b>先生より </b>{r.teacher_comment}
+              {r.teacher_score !== '' && r.teacher_score != null && String(r.teacher_score) !== '' ? <span className="scorebub" style={{ marginLeft: 8 }}>{String(r.teacher_score)}点</span> : null}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+window.MineScreen = MineScreen;
+
+function ClassScreen({ ctx }) {
+  const U = window.NoteUtil;
+  const groups = React.useMemo(() => U.groupUnits(ctx.units), [ctx.units]);
+  const [groupKey, setGroupKey] = React.useState('');
+  const [lessonKey, setLessonKey] = React.useState('');
+  const [rows, setRows] = React.useState(null);
+  const isTeacher = !!(ctx.user && ctx.user.isTeacher);
+
+  function onSelect(gk, lk) {
+    setGroupKey(gk); setLessonKey(lk);
+    if (!lk) { setRows(null); return; }
+    if (!window.RefCache.classByUnit[String(lk)]) setRows('loading');
+    window.RefCache.getClass(lk).then(r => setRows(r)).catch(() => setRows([]));
+  }
+
+  if (!ctx.units.length) {
+    return <div className="content"><h1 className="page-h">みんなの振り返り</h1><div className="banner">まだ単元マスタが登録されていません。</div></div>;
+  }
+
+  return (
+    <div className="content">
+      <h1 className="page-h">みんなの振り返り</h1>
+      <p className="page-sub">単元 → 第N時 の順に選ぶと、{isTeacher ? '全員' : 'クラス'}の振り返りを見られます。</p>
+      <div className="card">
+        <div className="lbl">どの授業を見ますか</div>
+        <UnitSelector groups={groups} groupKey={groupKey} lessonKey={lessonKey} onChange={onSelect} />
+      </div>
+
+      {rows === 'loading' && <div className="card"><div style={{ color: 'var(--text-3)', fontSize: 13.5 }}>読み込んでいます…</div></div>}
+      {Array.isArray(rows) && !rows.length && <div className="card"><div style={{ color: 'var(--text-3)', fontSize: 13.5 }}>この授業の振り返りはまだありません。</div></div>}
+      {Array.isArray(rows) && rows.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginBottom: 12 }}>{rows.length}人の振り返り</div>
+          {rows.map(r => (
+            <window.RefItem key={r.id} r={r} head={
+              <span>
+                {r.class ? <span className="chip" style={{ marginRight: 6 }}>{r.class}組</span> : null}
+                {r.student_number ? r.student_number + '番 ' : ''}{r.student_name || ''}
+                <span style={{ marginLeft: 8 }}>{U.fmtDate(r.updated_at)}</span>
+              </span>
+            } />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+window.ClassScreen = ClassScreen;
+  </script>
+
+  <!-- ============================== ⑤ 振り返り一括返信（先生） ============================== -->
+  <script type="text/babel">
+function FeedbackScreen({ ctx }) {
+  const U = window.NoteUtil;
+  const { toast } = U;
+  const groups = React.useMemo(() => U.groupUnits(ctx.units), [ctx.units]);
+  const [groupKey, setGroupKey] = React.useState('');
+  const [lessonKey, setLessonKey] = React.useState('');
+  const [klass, setKlass] = React.useState('');
+  const [rows, setRows] = React.useState(null);        // 一括返信はキャッシュしない（常にサーバーから）
+  const [drafts, setDrafts] = React.useState({});      // id → {comment, score}
+  const [cfg, setCfg] = React.useState({ len: '60', tone: 'あたたかく励ます', honor: 'さん' });
+  const [pasteText, setPasteText] = React.useState('');
+  const [promptMsg, setPromptMsg] = React.useState('');
+  const [parseMsg, setParseMsg] = React.useState('');
+  const [saveMsg, setSaveMsg] = React.useState('');
+  const [oneMsg, setOneMsg] = React.useState({});
+  const reqRef = React.useRef(0);
+
+  function load(gk, lk, cls) {
+    setGroupKey(gk); setLessonKey(lk); setKlass(cls);
+    setPromptMsg(''); setParseMsg(''); setSaveMsg(''); setOneMsg({});
+    if (!lk) { setRows(null); setDrafts({}); return; }
+    const req = ++reqRef.current;
+    setRows('loading');
+    window.API.call('getReflectionsForLesson', { unit_key: lk, class: cls }).then(rs => {
+      if (req !== reqRef.current) return;
+      rs = rs || [];
+      if (rs.error) { toast(rs.error, '!'); setRows([]); return; }
+      setRows(rs);
+      const d = {};
+      rs.forEach(r => { d[r.id] = { comment: r.teacher_comment || '', score: String(r.teacher_score || '') }; });
+      setDrafts(d);
+    }).catch(err => { if (req === reqRef.current) { toast('読み込みに失敗：' + (err && err.message || err), '!'); setRows([]); } });
+  }
+
+  function upDraft(id, patch) {
+    setDrafts(d => Object.assign({}, d, { [id]: Object.assign({}, d[id] || { comment: '', score: '' }, patch) }));
+  }
+
+  function buildPrompt() {
+    if (!Array.isArray(rows) || !rows.length) { setPromptMsg('生徒データがありません'); return; }
+    const unit = (ctx.units || []).find(x => String(x.key) === String(lessonKey));
+    const unitName = unit ? (unit.unit || '') : '';
+    const lessonLabel = unit ? ('第' + unit.lesson_no + '時 ' + (unit.lesson_title || '')) : '';
+    const noName = cfg.honor === '__none__';
+    // 【個人情報保護】生徒の実名はAIに送らない。匿名ラベル「生徒N」で送り、
+    // 名前で呼びかけたい場合は返信を {name} プレースホルダーで書かせて、
+    // 貼り戻し時にこの端末内だけで実名へ差し替える（実名がAIに渡らない）。
+    const nameRule = noName
+      ? '・返信の中で名前は使わないこと（「あなた」も避け、振り返りの内容に直接応答する）'
+      : '・各返信は必ず文頭に半角の「{name}」を置いて書き始めること（例：「{name}、今日は〜」）。{name} は後で先生が実際の名前に置き換えます。それ以外の場所には名前や呼びかけを入れないこと';
+
+    let p = 'あなたは学校の先生です。生徒が書いた授業の振り返りコメントに、先生として一人ずつ返信コメントを書いてください。\n\n';
+    if (unitName) p += '【単元】' + unitName + '\n';
+    if (lessonLabel) p += '【授業】' + lessonLabel + '\n';
+    if (klass) p += '【クラス】' + klass + '組\n';
+    p += '\n【共通の条件】\n';
+    p += '・返信の長さ：1人あたり約' + cfg.len + '字（前後10字程度の幅はOK）\n';
+    p += '・トーン：' + cfg.tone + '\n';
+    p += nameRule + '\n';
+    p += '・その生徒の振り返り内容に具体的に触れて返すこと（当たり障りのない定型文にしない）\n';
+    p += '・（プライバシー保護のため、生徒は「生徒1」「生徒2」と番号で示します。実名は伝えていません）\n\n';
+    p += '【出力フォーマット】必ず次の形式を厳密に守って、生徒の数だけ繰り返してください。余計な前置きや見出し・箇条書きは書かないこと。\n';
+    p += '===【生徒1】===\n返信コメント本文（改行は入れず1段落で）\n\n';
+    p += '【生徒の振り返り】\n';
+    rows.forEach((s, i) => {
+      p += '\n===【生徒' + (i + 1) + '】===\n';
+      if (s.goal) p += '目標：' + String(s.goal).replace(/\n/g, ' / ') + '\n';
+      if (s.reflection) p += '振り返り：' + s.reflection + '\n';
+    });
+
+    U.copyText(p).then(() => {
+      setPromptMsg('コピーしました（' + rows.length + '人分・実名は含みません）。生成AIに貼り付けて送ってください。');
+    }).catch(() => {
+      setPromptMsg('自動コピーに失敗しました。もう一度押すか、手動でコピーしてください。');
+    });
+  }
+
+  function parseAndFill() {
+    const txt = pasteText || '';
+    if (!txt.trim()) { setParseMsg('貼り付け欄が空です'); return; }
+    const sections = txt.split(/===【([^】]+)】===/);
+    const found = {};
+    for (let i = 1; i < sections.length; i += 2) {
+      const label = (sections[i] || '').trim();
+      const body = (sections[i + 1] || '').trim();
+      if (label && body) found[label] = body;
+    }
+    const norm = (s) => String(s).replace(/[\s　]/g, '');
+    // {name} を実名に差し替える際の敬称。「くん／さん」のように両方併記なら安全側で「さん」に。
+    const honorSuffix = (cfg.honor === '__none__') ? ''
+      : (String(cfg.honor || '').indexOf('／') >= 0 ? 'さん' : String(cfg.honor || 'さん'));
+    const fillName = (body, stu) => {
+      const rep = honorSuffix ? ((stu.student_name || '') + honorSuffix) : '';
+      // {name} / {なまえ} / [name] を実名へ（敬称なし設定なら空に）。先頭の不要な読点も整える。
+      return String(body)
+        .replace(/[\{\[]\s*(?:name|なまえ|名前)\s*[\}\]]/gi, rep)
+        .replace(/^[\s、,]+/, '');
+    };
+    let matched = 0;
+    const unmatched = [];
+    const patch = {};
+    Object.keys(found).forEach(label => {
+      // 「生徒N」の番号で並び順から本人を特定（実名はAIに出していない）
+      const mNum = norm(label).match(/生徒(\d+)/) || norm(label).match(/^(\d+)$/);
+      let stu = mNum ? (rows[parseInt(mNum[1], 10) - 1] || null) : null;
+      // 後方互換：万一名前で返ってきた場合は名前でも探す
+      if (!stu) stu = rows.find(s => s.student_name === label) || rows.find(s => norm(s.student_name) === norm(label));
+      if (stu) { patch[stu.id] = Object.assign({}, drafts[stu.id] || { comment: '', score: '' }, { comment: fillName(found[label], stu) }); matched++; }
+      else unmatched.push(label);
+    });
+    if (matched) setDrafts(d => Object.assign({}, d, patch));
+    let m = matched + '人に振り分けました';
+    if (unmatched.length) m += '。未マッチ：' + unmatched.join('、') + '（番号がズレている可能性）';
+    if (matched === 0 && unmatched.length === 0) {
+      m = 'フォーマットを読み取れませんでした。返答が ===【生徒N】=== の形式か確認してください';
+    }
+    setParseMsg(m);
+  }
+
+  function saveOne(id) {
+    const d = drafts[id] || { comment: '', score: '' };
+    setOneMsg(m => Object.assign({}, m, { [id]: '保存中…' }));
+    window.API.call('updateReflectionFeedback', { id: id, comment: d.comment || '', score: d.score || '' }).then(r => {
+      if (r && r.success) { setOneMsg(m => Object.assign({}, m, { [id]: '保存しました' })); toast('保存しました', '✓'); }
+      else setOneMsg(m => Object.assign({}, m, { [id]: '保存できませんでした：' + ((r && r.error) || '不明なエラー') }));
+    }).catch(err => setOneMsg(m => Object.assign({}, m, { [id]: String(err && err.message || err) })));
+  }
+
+  function saveAll() {
+    if (!Array.isArray(rows) || !rows.length) { setSaveMsg('生徒データがありません'); return; }
+    const items = rows.map(s => {
+      const d = drafts[s.id] || { comment: '', score: '' };
+      return { id: s.id, comment: d.comment || '', score: d.score || '' };
+    });
+    setSaveMsg('保存中…');
+    window.API.call('updateReflectionFeedbackBatch', { items: items }).then(r => {
+      if (r && r.success) {
+        setSaveMsg(r.saved + '人ぶん保存しました');
+        toast('一括保存が完了しました（' + r.saved + '人）', '✓');
+      } else setSaveMsg('保存できませんでした：' + ((r && r.error) || '不明なエラー'));
+    }).catch(err => setSaveMsg(String(err && err.message || err)));
+  }
+
+  if (!ctx.units.length) {
+    return <div className="content"><h1 className="page-h">振り返り一括返信</h1><div className="banner">まだ単元マスタが登録されていません。</div></div>;
+  }
+
+  return (
+    <div className="content">
+      <h1 className="page-h">振り返り一括返信（先生用）</h1>
+      <p className="page-sub">単元 → 第N時 → クラス の順に選ぶと、生徒の振り返りが一覧になります。一括プロンプトをコピーして生成AIに送り、返ってきた文章を貼り戻すと各生徒のコメント欄へ自動で振り分けられます。「全員まとめて保存」で確定。個別の手入力・個別保存もできます。</p>
+
+      <div className="card">
+        <div className="lbl"><span className="no">1</span>授業とクラスを選ぶ</div>
+        <UnitSelector groups={groups} groupKey={groupKey} lessonKey={lessonKey} onChange={(gk, lk) => load(gk, lk, klass)} />
+        <div className="row" style={{ marginTop: 12 }}>
+          <div className="sel" style={{ maxWidth: 260 }}>
+            <select value={klass} onChange={(e) => load(groupKey, lessonKey, e.target.value)}>
+              <option value="">全クラス</option>
+              {(ctx.classes || []).map(c => <option key={String(c.grade) + '-' + String(c.class)} value={c.class}>{c.grade}年{c.class}組</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {rows === 'loading' && <div className="card"><div style={{ color: 'var(--text-3)', fontSize: 13.5 }}>読み込んでいます…</div></div>}
+      {Array.isArray(rows) && !rows.length && <div className="card"><div style={{ color: 'var(--text-3)', fontSize: 13.5 }}>該当する振り返りはありません。</div></div>}
+
+      {Array.isArray(rows) && rows.length > 0 && (
+        <div>
+          <div className="card">
+            <div className="lbl"><span className="no">2</span>一括返信（{rows.length}人）</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+              <label className="hand" style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 5 }}>字数
+                <span className="cfgwrap"><select className="cfgsel" value={cfg.len} onChange={(e) => setCfg(Object.assign({}, cfg, { len: e.target.value }))}>
+                  <option value="40">40字</option><option value="60">60字</option><option value="90">90字</option><option value="130">130字</option>
+                </select></span>
+              </label>
+              <label className="hand" style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 5 }}>トーン
+                <span className="cfgwrap"><select className="cfgsel" value={cfg.tone} onChange={(e) => setCfg(Object.assign({}, cfg, { tone: e.target.value }))}>
+                  <option>あたたかく励ます</option><option>落ち着いて丁寧に</option><option>明るくフレンドリーに</option><option>具体的に助言する</option>
+                </select></span>
+              </label>
+              <label className="hand" style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 5 }}>呼び方
+                <span className="cfgwrap"><select className="cfgsel" value={cfg.honor} onChange={(e) => setCfg(Object.assign({}, cfg, { honor: e.target.value }))}>
+                  <option value="さん">さん</option><option value="くん／さん">くん／さん</option><option value="__none__">名前を使わない</option>
+                </select></span>
+              </label>
+              <button className="btn blue sm" onClick={buildPrompt}>プロンプトをコピー</button>
+              <button className="btn ghost sm" onClick={() => window.open('https://claude.ai/new', '_blank')}>claude.ai を開く</button>
+            </div>
+            {promptMsg && <div className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)', marginTop: 8 }}>{promptMsg}</div>}
+
+            <div className="fb-line">
+              <div className="lbl" style={{ marginBottom: 10 }}><span className="no">3</span>生成AIの返答を貼り戻して振り分ける</div>
+              <textarea className="q-area" style={{ minHeight: 110, fontSize: 13.5 }} value={pasteText}
+                placeholder="生成AIの返答をここに丸ごと貼り付け（===【生徒N】=== の形式で返ってきます）"
+                onChange={(e) => setPasteText(e.target.value)} />
+              <div style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn sm" onClick={parseAndFill}>生徒ごとに振り分け</button>
+                <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{parseMsg}</span>
+              </div>
+            </div>
+
+            <div className="fb-line" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button className="btn green lg" onClick={saveAll}>全員まとめて保存</button>
+              <span className="hand" style={{ fontSize: 13, color: 'var(--ink2)' }}>{saveMsg}</span>
+            </div>
+          </div>
+
+          {rows.map(r => {
+            const d = drafts[r.id] || { comment: '', score: '' };
+            return (
+              <div key={r.id} className="fb-card">
+                <div className="who" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                  {r.class ? <span className="chip">{r.class}組</span> : null}
+                  <span className="hand" style={{ fontSize: 13, color: 'var(--ink2)' }}>{r.student_number ? r.student_number + '番' : ''}</span>
+                  <span className="hand" style={{ fontSize: 16 }}>{r.student_name}</span>
+                </div>
+                {r.goal ? <div style={{ fontSize: 13.5, marginBottom: 4, whiteSpace: 'pre-wrap' }}><span className="hand" style={{ color: 'var(--ink2)' }}>目標：</span><span className="mark">{r.goal}</span></div> : null}
+                {r.reflection ? <div style={{ fontSize: 14.5, lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{r.reflection}</div> : null}
+                <div className="fb-line">
+                  <textarea className="q-area" style={{ minHeight: 56, fontSize: 14 }} value={d.comment}
+                    placeholder="先生コメント（複数行OK）" onChange={(e) => upDraft(r.id, { comment: e.target.value })} />
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+                    <input className="in" style={{ width: 90 }} value={d.score} placeholder="点数"
+                      onChange={(e) => upDraft(r.id, { score: e.target.value })} />
+                    <button className="btn ghost sm" onClick={() => saveOne(r.id)}>この生徒だけ保存</button>
+                    <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{oneMsg[r.id] || ''}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+window.FeedbackScreen = FeedbackScreen;
+  </script>
+
+  <!-- ============================== ⑥ 管理者画面（先生） ============================== -->
+  <script type="text/babel">
+function AdminScreen({ ctx }) {
+  const { toast } = window.NoteUtil;
+  const [units, setUnits] = React.useState([]);
+  const [roster, setRoster] = React.useState([]);
+  const [teachers, setTeachers] = React.useState([]);
+  const [imp, setImp] = React.useState(null);
+  const [nu, setNu] = React.useState({ chapter: '', unit: '', lesson_no: '', lesson_title: '', sort_order: '0', goal: '' });
+  const [bulkUnits, setBulkUnits] = React.useState('');
+  const [bulkMsg, setBulkMsg] = React.useState('');
+  const [nr, setNr] = React.useState({ email: '', name: '', grade: '', class: '', number: '' });
+  const [bulkRoster, setBulkRoster] = React.useState('');
+  const [nt, setNt] = React.useState({ email: '', name: '', subject: '' });
+  const [goalOptionsText, setGoalOptionsText] = React.useState(
+    String((ctx.settings && ctx.settings.goal_options) || window.NoteUtil.DEFAULT_GOAL_OPTIONS)
+  );
+  const [goalMsg, setGoalMsg] = React.useState('');
+
+  function reloadAll() {
+    window.API.call('getUnitsMaster').then(r => setUnits(r || [])).catch(() => {});
+    window.API.call('getRoster').then(r => setRoster(Array.isArray(r) ? r : [])).catch(() => {});
+    window.API.call('getTeachers').then(r => setTeachers(Array.isArray(r) ? r : [])).catch(() => {});
+    window.API.call('getImpersonationStatus').then(setImp).catch(() => {});
+  }
+  React.useEffect(() => { reloadAll(); }, []);
+
+  function afterUnitsChange() { ctx.reloadUnits(); reloadAll(); }
+  function afterRosterChange() { ctx.reloadClasses(); reloadAll(); }
+
+  function addOneUnit() {
+    const payload = {
+      chapter: Number(nu.chapter), unit: nu.unit.trim(), lesson_no: Number(nu.lesson_no),
+      lesson_title: nu.lesson_title.trim(), sort_order: Number(nu.sort_order || 0),
+      goal: (nu.goal || '').trim()
+    };
+    window.API.call('addUnit', payload).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast('単元を追加しました', '');
+      setNu({ chapter: nu.chapter, unit: '', lesson_no: '', lesson_title: '', sort_order: nu.sort_order, goal: '' });
+      afterUnitsChange();
+    }).catch(err => toast('追加に失敗：' + (err && err.message || err), '!'));
+  }
+  function addBulkUnits() {
+    if (!bulkUnits.trim()) { setBulkMsg('貼り付け欄が空です'); return; }
+    setBulkMsg('登録中…');
+    window.API.call('bulkAddUnits', bulkUnits).then(r => {
+      if (r && r.error) { setBulkMsg(r.error); return; }
+      let m = r.added + '件を追加しました';
+      if (r.skipped) m += '／' + r.skipped + '件は既登録のためスキップ';
+      if (r.errors && r.errors.length) m += '／' + r.errors.length + '件エラー：' + r.errors.join('、');
+      setBulkMsg(m); setBulkUnits('');
+      toast('一括追加が完了しました（' + r.added + '件）', '');
+      afterUnitsChange();
+    }).catch(err => setBulkMsg(String(err && err.message || err)));
+  }
+  function delUnit(key) {
+    if (!confirm('この単元を削除しますか？')) return;
+    window.API.call('deleteUnit', key).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast('削除しました', ''); afterUnitsChange();
+    });
+  }
+
+  function addOneRoster() {
+    if (!nr.email.trim() || !nr.name.trim()) { toast('メールと氏名は必須', '!'); return; }
+    window.API.call('addRosterEntry', {
+      email: nr.email.trim(), name: nr.name.trim(), grade: nr.grade, class: nr.class.trim(), number: nr.number
+    }).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast('1人追加しました', '');
+      setNr({ email: '', name: '', grade: '', class: '', number: '' });
+      afterRosterChange();
+    }).catch(err => toast('追加に失敗：' + (err && err.message || err), '!'));
+  }
+  function replaceRosterTsv() {
+    if (!bulkRoster.trim()) return;
+    if (!confirm('既存の名簿を全部消して、貼り付けた内容で置き換えます。よろしいですか？')) return;
+    window.API.call('replaceRoster', bulkRoster).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast(r.count + ' 人を登録しました', ''); setBulkRoster(''); afterRosterChange();
+    });
+  }
+  function delRoster(email) {
+    if (!confirm(email + ' を名簿から削除しますか？')) return;
+    window.API.call('deleteRosterEntry', email).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast('削除しました', ''); afterRosterChange();
+    });
+  }
+
+  function addTeacher() {
+    if (!nt.email.trim()) { toast('メールは必須', '!'); return; }
+    window.API.call('addTeacher', { email: nt.email.trim(), name: nt.name.trim(), subject: nt.subject.trim() }).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast('先生を追加しました', '✓'); setNt({ email: '', name: '', subject: '' }); reloadAll();
+    });
+  }
+
+  function saveGoalOptions() {
+    const raw = (goalOptionsText || '').replace(/\r?\n/g, ',');
+    const clean = raw.split(',').map(s => s.trim()).filter(Boolean).join(',');
+    window.API.call('updateSetting', { key: 'goal_options', value: clean }).then(r => {
+      if (r && r.error) { setGoalMsg(r.error); return; }
+      ctx.updateSettings({ goal_options: clean });
+      setGoalOptionsText(clean);
+      setGoalMsg('保存しました');
+      toast('目標の選択肢を更新しました', '');
+    }).catch(err => setGoalMsg(String(err && err.message || err)));
+  }
+
+  function startImp(email) {
+    if (!confirm('「' + email + '」として画面を切り替えます。\n※体験版では、どこにも保存されません。\nよろしいですか？')) return;
+    window.API.call('setImpersonation', email).then(r => {
+      if (r && r.error) { toast(r.error, '!'); return; }
+      toast('テストモードを開始します。画面を再読み込みします', '');
+      setTimeout(() => location.reload(), 800);
+    }).catch(err => toast('開始に失敗：' + (err && err.message || err), '!'));
+  }
+  function stopImp() {
+    window.API.call('clearImpersonation').then(() => {
+      toast('テストモードを解除します。画面を再読み込みします', '');
+      setTimeout(() => location.reload(), 700);
+    });
+  }
+
+  const groups = window.NoteUtil.groupUnits(units);
+
+  return (
+    <div className="content">
+      <h1 className="page-h">管理者画面</h1>
+      <p className="page-sub">単元マスタ・名簿・先生・目標の選択肢の管理と、テストモード（生徒として見る）。</p>
+
+      {imp && imp.impersonating && (
+        <div className="banner">いま <b>{imp.asEmail}</b> として表示しています。
+          <button className="btn ghost sm" style={{ marginLeft: 10 }} onClick={stopImp}>解除する</button>
+        </div>
+      )}
+
+      <div className="card" style={{ borderColor: 'var(--hard)' }}>
+        <div className="lbl warn">テストモード（生徒として見る）</div>
+        <p className="page-sub" style={{ marginBottom: 8 }}>下の名簿の「この子で見る」を押すと、画面全体がその生徒のものに切り替わります。<br />
+          <span style={{ color: 'var(--hard)' }}>このモードで操作した内容は、通常の生徒データとして保存されます。テストが終わったら、テスト用の生徒を名簿から削除すれば、そのemailの記録は誰にも表示されなくなります。</span></p>
+      </div>
+
+      <div className="card">
+        <div className="lbl"><span className="no">A</span>単元マスタ</div>
+        <p className="page-sub" style={{ marginBottom: 10 }}>章・単元名・第N時を登録。ここで登録した単元が各画面（目標／みんなの振り返り／一括返信）の選択肢になります。</p>
+
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 8 }}>1件ずつ追加</div>
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: '0 0 70px' }}><label className="fld">章</label><input className="in" type="number" min="1" value={nu.chapter} onChange={(e) => setNu(Object.assign({}, nu, { chapter: e.target.value }))} placeholder="1" /></div>
+          <div style={{ flex: 2, minWidth: 130 }}><label className="fld">単元名</label><input className="in" value={nu.unit} onChange={(e) => setNu(Object.assign({}, nu, { unit: e.target.value }))} placeholder="正負の数" /></div>
+          <div style={{ flex: '0 0 80px' }}><label className="fld">第N時</label><input className="in" type="number" min="1" value={nu.lesson_no} onChange={(e) => setNu(Object.assign({}, nu, { lesson_no: e.target.value }))} placeholder="3" /></div>
+          <div style={{ flex: 2, minWidth: 130 }}><label className="fld">授業内容</label><input className="in" value={nu.lesson_title} onChange={(e) => setNu(Object.assign({}, nu, { lesson_title: e.target.value }))} placeholder="数の大小" /></div>
+          <div style={{ flex: '0 0 80px' }}><label className="fld">並び順</label><input className="in" type="number" value={nu.sort_order} onChange={(e) => setNu(Object.assign({}, nu, { sort_order: e.target.value }))} /></div>
+          <button className="btn green sm" onClick={addOneUnit}>追加</button>
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <label className="fld">本時のゴール（任意）</label>
+            <input className="in" value={nu.goal} onChange={(e) => setNu(Object.assign({}, nu, { goal: e.target.value }))}
+              placeholder="例）正負の数の大小を、数直線を使って説明できる" />
+          </div>
+        </div>
+        <p className="page-sub" style={{ margin: '6px 0 0' }}>※ここに入れると、生徒の「目標設定と振り返り」画面で<b>その授業を選んだときに表示</b>されます（生徒が見ながら自分の目標を決められます）。</p>
+
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', margin: '24px 0 8px' }}>一括追加（TSV貼付）</div>
+        <p className="page-sub" style={{ marginBottom: 8 }}>6列タブ区切り：<b>章 ⇥ 単元名 ⇥ 第N時 ⇥ 授業内容 ⇥ 並び順 ⇥ 本時のゴール（任意）</b>。Excel／スプレッドシートの範囲をコピー→貼付→一括追加。同じ単元はスキップ（<b>ゴールだけは上書き更新</b>）。</p>
+        <textarea className="ta" placeholder={"1\t正負の数\t1\t正負の数とは\t1\t正の数・負の数の意味を説明できる\n1\t正負の数\t2\t数直線と絶対値\t2\t数直線で大小を比べられる"} value={bulkUnits} onChange={(e) => setBulkUnits(e.target.value)} />
+        <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn green sm" onClick={addBulkUnits}>一括追加</button>
+          <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{bulkMsg}</span>
+        </div>
+
+        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ink2)' }}>登録：{groups.length} 章 / 合計 {units.length} 時間</div>
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 260, overflow: 'auto' }}>
+          {groups.map(g => (
+            <details key={g.groupKey} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '7px 11px' }}>
+              <summary style={{ cursor: 'pointer', fontSize: 13.5 }}>{g.label}（{g.lessons.length}時間）</summary>
+              <div style={{ paddingTop: 6 }}>
+                {g.lessons.map(l => (
+                  <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '3px 0' }}>
+                    <span style={{ color: 'var(--ink2)' }}>第{l.lesson_no}時</span><span>{l.lesson_title}</span>
+                    <button className="btn ghost sm" style={{ marginLeft: 'auto', padding: '3px 8px' }} onClick={() => delUnit(l.key)}>削除</button>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="lbl"><span className="no">B</span>名簿（roster）</div>
+
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 8 }}>1人ずつ追加</div>
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: 2, minWidth: 170 }}><label className="fld">メール</label><input className="in" value={nr.email} onChange={(e) => setNr(Object.assign({}, nr, { email: e.target.value }))} placeholder="student@school.jp" /></div>
+          <div style={{ flex: 1, minWidth: 110 }}><label className="fld">氏名</label><input className="in" value={nr.name} onChange={(e) => setNr(Object.assign({}, nr, { name: e.target.value }))} placeholder="山田 太郎" /></div>
+          <div style={{ flex: '0 0 70px' }}><label className="fld">学年</label><input className="in" type="number" min="1" value={nr.grade} onChange={(e) => setNr(Object.assign({}, nr, { grade: e.target.value }))} /></div>
+          <div style={{ flex: '0 0 70px' }}><label className="fld">組</label><input className="in" value={nr.class} onChange={(e) => setNr(Object.assign({}, nr, { class: e.target.value }))} placeholder="A" /></div>
+          <div style={{ flex: '0 0 70px' }}><label className="fld">番号</label><input className="in" type="number" min="1" value={nr.number} onChange={(e) => setNr(Object.assign({}, nr, { number: e.target.value }))} /></div>
+          <button className="btn green sm" onClick={addOneRoster}>追加</button>
+        </div>
+
+        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', margin: '24px 0 8px' }}>一括登録（TSV貼付・全置換）</div>
+        <p className="page-sub" style={{ marginBottom: 8 }}>5列タブ区切り：<b>メール ⇥ 学年 ⇥ 組 ⇥ 出席番号 ⇥ 氏名</b>。既存の名簿はすべて上書きされます。</p>
+        <textarea className="ta" placeholder={"taro@school.jp\t1\tA\t1\t山田 太郎"} value={bulkRoster} onChange={(e) => setBulkRoster(e.target.value)} />
+        <div style={{ marginTop: 10 }}>
+          <button className="btn primary sm" onClick={replaceRosterTsv}>全置換で登録</button>
+          <span className="hand" style={{ marginLeft: 10, fontSize: 13, color: 'var(--ink2)' }}>現在 {roster.length} 人</span>
+        </div>
+
+        {roster.length > 0 && (
+          <div style={{ marginTop: 12, maxHeight: 260, overflow: 'auto' }} className="rec-scroll">
+            <table className="rec-table">
+              <thead><tr><th>氏名</th><th>メール</th><th>学年</th><th>組</th><th>番号</th><th>テスト</th><th></th></tr></thead>
+              <tbody>{roster.map(r => (
+                <tr key={r.email}>
+                  <td className="hand">{r.name}</td>
+                  <td style={{ fontSize: 12, color: 'var(--ink2)' }}>{r.email}</td>
+                  <td className="c">{r.grade}</td><td className="c">{r.class}</td><td className="c">{r.number}</td>
+                  <td className="c"><button className="btn ghost sm" style={{ padding: '3px 8px' }} onClick={() => startImp(r.email)}>この子で見る</button></td>
+                  <td className="c"><button className="btn ghost sm" style={{ padding: '3px 8px', color: 'var(--red)' }} onClick={() => delRoster(r.email)}>削除</button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="lbl"><span className="no">C</span>先生の追加</div>
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: 2, minWidth: 180 }}><label className="fld">メール</label><input className="in" value={nt.email} onChange={(e) => setNt(Object.assign({}, nt, { email: e.target.value }))} placeholder="another-teacher@..." /></div>
+          <div style={{ flex: 1, minWidth: 110 }}><label className="fld">名前</label><input className="in" value={nt.name} onChange={(e) => setNt(Object.assign({}, nt, { name: e.target.value }))} /></div>
+          <div style={{ flex: 1, minWidth: 110 }}><label className="fld">教科</label><input className="in" value={nt.subject} onChange={(e) => setNt(Object.assign({}, nt, { subject: e.target.value }))} /></div>
+          <button className="btn green sm" onClick={addTeacher}>追加</button>
+        </div>
+        {teachers.length > 0 && (
+          <div style={{ marginTop: 10, fontSize: 13.5, color: 'var(--ink2)' }}>{teachers.map(t => t.name || t.email).join(' ・ ')}</div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="lbl"><span className="no">D</span>目標の選択肢（ドロップダウン）</div>
+        <p className="page-sub" style={{ marginBottom: 8 }}>「目標設定と振り返り」のドロップダウン候補をカンマ区切りで編集できます。改行はカンマと同じ扱い。</p>
+        <textarea className="ta" style={{ fontFamily: 'inherit' }} value={goalOptionsText} onChange={(e) => setGoalOptionsText(e.target.value)} />
+        <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn blue sm" onClick={saveGoalOptions}>保存</button>
+          <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{goalMsg}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+window.AdminScreen = AdminScreen;
+  </script>
+
+  <!-- ============================== ⑦ アプリ本体 ============================== -->
+  <script type="text/babel">
+// ── 線アイコン（絵文字の代わり。1.5px ストロークで統一） ──
+function Icon({ name, size }) {
+  const s = size || 18;
+  const p = {
+    // 目標と振り返り：チェック付きのノート
+    goal: <React.Fragment><path d="M5 3h9l4 4v14H5z" /><path d="M14 3v4h4" /><path d="M8.5 13.5l2 2 4-4" /></React.Fragment>,
+    // みんなの振り返り：2人
+    people: <React.Fragment><circle cx="9" cy="8" r="3" /><path d="M3.5 19.5c0-3 2.5-5 5.5-5s5.5 2 5.5 5" /><path d="M16 6.2a3 3 0 0 1 0 5.6" /><path d="M17.5 14.9c1.9.6 3.2 2.3 3.2 4.6" /></React.Fragment>,
+    // 一括返信：吹き出し
+    reply: <React.Fragment><path d="M4 5h16v11H9l-5 4z" /><path d="M8 9.5h8" /><path d="M8 12.5h5" /></React.Fragment>,
+    // 管理者：スライダー
+    settings: <React.Fragment><path d="M4 7h9" /><path d="M17 7h3" /><circle cx="15" cy="7" r="2" /><path d="M4 17h3" /><path d="M11 17h9" /><circle cx="9" cy="17" r="2" /></React.Fragment>,
+    // ヘッダーのマーク
+    mark: <React.Fragment><path d="M5 4h10l4 4v12H5z" /><path d="M8.5 12.5l2.2 2.2 4.3-4.3" /></React.Fragment>
+  }[name];
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{p}</svg>
+  );
+}
+
+function AppRoot() {
+  const [boot, setBoot] = React.useState(null);
+  const [bootErr, setBootErr] = React.useState('');
+  const [tab, setTab] = React.useState('goal');
+  const [units, setUnits] = React.useState([]);
+  const [classes, setClasses] = React.useState([]);
+  const [settings, setSettings] = React.useState({});
+
+  React.useEffect(() => {
+    window.API.call('getInitialData').then(d => {
+      if (!d || d.error) { setBootErr((d && d.error) || 'データ取得に失敗'); return; }
+      setBoot(d);
+      setUnits(d.units || []);
+      setClasses(d.classes || []);
+      setSettings(d.settings || {});
+      if (d.settings && d.settings.portal_title) document.title = d.settings.portal_title;
+      // 起動時に「自分の振り返り」を1回だけ先読み → 以降の画面切替を即時化
+      if (d.user && d.user.email) window.RefCache.getMy(true).catch(() => {});
+    }).catch(e => setBootErr(String(e && e.message || e)));
+  }, []);
+
+  if (bootErr) {
+    return (
+      <div className="loading-screen">
+        <div className="banner" style={{ maxWidth: 480 }}>
+          <b>うまく開けませんでした。</b><br />{bootErr}<br /><br />
+          先生へ：はじめて使うときは Apps Script エディタで <b>setup()</b> を1回実行してください。
+        </div>
+      </div>
+    );
+  }
+  if (!boot) {
+    return <div className="loading-screen"><div className="spin"></div><div style={{ fontSize: 13.5, color: 'var(--text-3)' }}>読み込んでいます…</div></div>;
+  }
+
+  const user = boot.user || {};
+  const isTeacher = !!user.isTeacher;
+  const ctx = {
+    user: user, units: units, classes: classes, settings: settings,
+    reloadUnits: () => window.API.call('getUnitsMaster').then(r => setUnits(r || [])).catch(() => {}),
+    reloadClasses: () => window.API.call('getRosterClasses').then(r => setClasses(r || [])).catch(() => {}),
+    updateSettings: (patch) => setSettings(s => Object.assign({}, s, patch))
+  };
+
+  // 「自分の振り返り」は右サイドパネル（自分モード）に一本化したのでメニューから削除。
+  // 「みんなの振り返り」は全幅で読める価値があるため先生のみ残す（生徒はサイドパネルで見る）。
+  const NAV = [
+    ['goal', 'goal', '目標と振り返り', true],
+    ['class', 'people', 'みんなの振り返り', isTeacher],
+    ['feedback', 'reply', '一括返信', isTeacher],
+    ['admin', 'settings', '管理者', isTeacher]
+  ].filter(x => x[3]);
+
+  function exitImp() {
+    if (!confirm('先生アカウントに戻ります。よろしいですか？')) return;
+    window.API.call('clearImpersonation').then(r => {
+      if (r && r.success) location.reload();
+      else alert((r && r.error) || '解除に失敗しました');
+    }).catch(e => alert('解除に失敗しました：' + (e && e.message || e)));
+  }
+
+  const whoLabel = isTeacher
+    ? (user.name || '先生') + ' 先生'
+    : (user.userClass ? (user.grade + '年' + user.userClass + '組 ' + user.studentNumber + '番 ') : '') + (user.name || '');
+
+  return (
+    <div className="app">
+      {!window.API.HAS_GAS && (
+        <div className="demobar">
+          <b>これは体験版です。</b>自由に触って試せます。入力した内容はどこにも保存されず、ページを開き直すと元に戻ります。
+        </div>
+      )}
+      <header className="bar">
+        <div className="crest"><Icon name="mark" size={19} /></div>
+        <div>
+          <div className="bar-title">{(settings && settings.portal_title) || '振り返りポータル'}</div>
+          <div className="bar-sub">日々の学びを記録する</div>
+        </div>
+        <div className="bar-spacer"></div>
+        {user.impersonating && (
+          <span className="pill" style={{ color: 'var(--hard)', marginRight: 6 }}>
+            テストモード（本来：{user.realEmail || '先生'}）
+            <button className="btn ghost sm" style={{ padding: '2px 8px', fontSize: 12 }} onClick={exitImp}>先生に戻る</button>
+          </span>
+        )}
+        <span className="pill" style={{ marginRight: 4 }}>{whoLabel}</span>
+      </header>
+
+      <div className="shell">
+        <nav className="rail">
+          <div className="rail-head">メニュー</div>
+          {NAV.map(([id, ic, label]) => (
+            <button key={id} className={'nav' + (tab === id ? ' on' : '')} onClick={() => setTab(id)}>
+              <span className="i"><Icon name={ic} /></span>{label}
+            </button>
+          ))}
+          {!window.API.HAS_GAS && <div className="rail-foot"><span>デモ表示中<br />（保存は本番のみ）</span></div>}
+        </nav>
+
+        {tab === 'goal' && <window.GoalScreen ctx={ctx} />}
+        {tab === 'mine' && <window.MineScreen ctx={ctx} />}
+        {tab === 'class' && <window.ClassScreen ctx={ctx} />}
+        {tab === 'feedback' && isTeacher && <window.FeedbackScreen ctx={ctx} />}
+        {tab === 'admin' && isTeacher && <window.AdminScreen ctx={ctx} />}
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<AppRoot />);
+  </script>
+</body>
+</html>
