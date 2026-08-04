@@ -609,7 +609,8 @@ window.RefItem = RefItem;
 
 // ── 書き方のヒント（右パネル上部。装飾ではなく実用の案内として置く） ──
 function HintCard({ ctx }) {
-  // 文言は先生が管理者画面で編集できる。中身を空にすればカードごと消える。
+  // 文言は先生が管理者画面で編集できる。「表示しない」にすればカードごと消える。
+  if (String((ctx && ctx.settings && ctx.settings.hint_hidden) || '') === '1') return null;
   const T = (k) => window.NoteUtil.TXT(ctx && ctx.settings, k);
   const lines = T('hint_lines').split('\n').map(s => s.trim()).filter(Boolean);
   if (!lines.length) return null;
@@ -1477,10 +1478,11 @@ function ScreenTextEditor({ ctx }) {
     ['ph_goal_note', '入力例：目標の補足', 'area'],
     ['ph_reflection', '入力例：振り返り', 'area'],
     ['hint_title', 'ヒントの見出し', 'input'],
-    ['hint_lines', 'ヒントの中身（1行に1つ／空にするとヒントごと消えます）', 'area']
+    ['hint_lines', 'ヒントの中身（1行に1つ）', 'area']
   ];
   const init = {};
   FIELDS.forEach(([k]) => { init[k] = String((ctx.settings && ctx.settings[k]) || ''); });
+  init.hint_hidden = String((ctx.settings && ctx.settings.hint_hidden) || '');
   const [vals, setVals] = React.useState(init);
   const [msg, setMsg] = React.useState('');
   const [busy, setBusy] = React.useState(false);
@@ -1491,7 +1493,8 @@ function ScreenTextEditor({ ctx }) {
   function saveAll() {
     setBusy(true); setMsg('保存中…');
     // 変更があったものだけ順番に保存する（空文字で保存＝既定に戻す）
-    const keys = FIELDS.map(f => f[0]).filter(k => String(vals[k]) !== String(init[k]));
+    const keys = FIELDS.map(f => f[0]).concat(['hint_hidden'])
+      .filter(k => String(vals[k]) !== String(init[k]));
     if (!keys.length) { setBusy(false); setMsg('変更はありません'); return; }
     const step = (i) => {
       if (i >= keys.length) {
@@ -1528,12 +1531,18 @@ function ScreenTextEditor({ ctx }) {
             : <input className="in" value={vals[k]} placeholder={U.TEXT_DEFAULTS[k]} onChange={(e) => up(k, e.target.value)} />}
         </div>
       ))}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, margin: '2px 0 14px', cursor: 'pointer' }}>
+        <input type="checkbox" checked={vals.hint_hidden === '1'}
+          onChange={(e) => up('hint_hidden', e.target.checked ? '1' : '')} />
+        ヒントのカードを表示しない（生徒の画面から消えます）
+      </label>
       <div style={{ marginTop: 6, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn blue sm" onClick={saveAll} disabled={busy}>保存</button>
         <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{msg}</span>
       </div>
       <p className="page-sub" style={{ margin: '10px 0 0' }}>
-        ※うすい文字は「いまの既定の文言」です。変更後は上の「テストモード（生徒として見る）」で確認できます。
+        ※うすい文字は「いまの既定の文言」です。入力欄を<b>空にすると既定の文言に戻ります</b>。
+        変更後は上の「テストモード（生徒として見る）」で確認できます。
       </p>
     </div>
   );
