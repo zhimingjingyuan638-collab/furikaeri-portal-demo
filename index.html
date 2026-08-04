@@ -289,7 +289,10 @@ label.fld{display:block;font-size:11.5px;color:var(--text-3);margin:0 0 5px 1px;
       { key: '3-一次方程式-2', chapter: 3, unit: '一次方程式', lesson_no: 2, lesson_title: '方程式の解き方', sort_order: 2 },
       // ↓ 学年ごとの分離を確認するためのサンプル（同じ章・同じ単元名でも学年が違えば別の単元になる）
       { key: 'G1-4-データの活用-1', chapter: 4, unit: 'データの活用', lesson_no: 1, lesson_title: '度数分布表', sort_order: 1, grade: '1' },
-      { key: 'G2-4-データの活用-1', chapter: 4, unit: 'データの活用', lesson_no: 1, lesson_title: '箱ひげ図', sort_order: 1, grade: '2' }
+      { key: 'G2-4-データの活用-1', chapter: 4, unit: 'データの活用', lesson_no: 1, lesson_title: '箱ひげ図', sort_order: 1, grade: '2' },
+      // ↓ 授業ごとの目標選択肢（goal_options）を確認するためのサンプル。空欄の単元は共通の選択肢が出る。
+      { key: '5-合唱-1', chapter: 5, unit: '合唱', lesson_no: 1, lesson_title: 'パート練習', sort_order: 1,
+        goal_options: 'A：正しい音程で歌える,B：パートの役割を理解する,C：強弱をつけて表現する' }
     ],
     reflections: [
       { id: 'r1', created_at: '2026-06-01T01:00:00Z', updated_at: '2026-06-02T01:00:00Z',
@@ -524,11 +527,32 @@ label.fld{display:block;font-size:11.5px;color:var(--text-3);margin:0 0 5px 1px;
     });
   }
 
+  // ── 画面の文言（先生が管理者画面から編集できる）──────────────
+  // 設計：settings に値があればそれを使い、空なら下の既定文言を使う。
+  //   → 先生が空欄にすれば「既定に戻る」。設定を消しても壊れない。
+  //   ★文言を使う場所は必ず TXT() 経由にすること（各所に直書きすると編集が効かなくなる）
+  var TEXT_DEFAULTS = {
+    label_goal:       '今日の目標（まず選ぶ）',
+    label_goal_note:  '目標の補足・自由記述（任意）',
+    label_reflection: '授業の振り返り（授業の最後に）',
+    ph_goal_note:     '選んだ目標についての自分の言葉での補足（例：図を使いながら理解したい）',
+    ph_reflection:    '今日わかったこと・できたこと、難しかったこと、次にやりたいこと など',
+    hint_title:       '書くときのヒント',
+    hint_lines:       '目標は「できるようになりたいこと」を一つに絞る\n振り返りは、わかったこと・つまずいたことを具体的に\n次の時間にやりたいことまで書けると、記録がつながる'
+  };
+  /** 文言を取り出す。settings に中身があればそれを、無ければ既定文言を返す。 */
+  function TXT(settings, key) {
+    var v = settings && settings[key];
+    v = (v == null) ? '' : String(v).trim();
+    return v !== '' ? v : (TEXT_DEFAULTS[key] || '');
+  }
+
   window.NoteUtil = {
     groupUnits: groupUnits, unitLabel: unitLabel, groupKeyOf: groupKeyOf,
     fmtDate: fmtDate, fmtDay: fmtDay,
     toast: toast, copyText: copyText,
-    DEFAULT_GOAL_OPTIONS: DEFAULT_GOAL_OPTIONS
+    DEFAULT_GOAL_OPTIONS: DEFAULT_GOAL_OPTIONS,
+    TEXT_DEFAULTS: TEXT_DEFAULTS, TXT: TXT
   };
 })();
   </script>
@@ -584,14 +608,16 @@ function RefItem({ r, head }) {
 window.RefItem = RefItem;
 
 // ── 書き方のヒント（右パネル上部。装飾ではなく実用の案内として置く） ──
-function HintCard() {
+function HintCard({ ctx }) {
+  // 文言は先生が管理者画面で編集できる。中身を空にすればカードごと消える。
+  const T = (k) => window.NoteUtil.TXT(ctx && ctx.settings, k);
+  const lines = T('hint_lines').split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lines.length) return null;
   return (
     <div className="hint-card">
-      <h3>書くときのヒント</h3>
+      <h3>{T('hint_title')}</h3>
       <ul>
-        <li>目標は「できるようになりたいこと」を一つに絞る</li>
-        <li>振り返りは、わかったこと・つまずいたことを具体的に</li>
-        <li>次の時間にやりたいことまで書けると、記録がつながる</li>
+        {lines.map((line, i) => <li key={i}>{line}</li>)}
       </ul>
     </div>
   );
@@ -659,13 +685,22 @@ function GoalScreen({ ctx }) {
   const U = window.NoteUtil;
   const { toast, groupUnits } = U;
   const groups = React.useMemo(() => groupUnits(ctx.units), [ctx.units]);
-  const goalOpts = React.useMemo(() => (
-    String((ctx.settings && ctx.settings.goal_options) || U.DEFAULT_GOAL_OPTIONS)
-      .split(',').map(s => s.trim()).filter(Boolean)
-  ), [ctx.settings]);
+  // 画面の文言（先生が管理者画面で編集可。空なら既定文言）
+  const T = (k) => U.TXT(ctx.settings, k);
 
   const [groupKey, setGroupKey] = React.useState('');
   const [lessonKey, setLessonKey] = React.useState('');
+
+  // 目標の選択肢：えらんだ授業に専用の選択肢があればそれを、無ければ共通設定を使う。
+  //   （例：数学の「例題を理解する」は合唱の授業には合わないので、授業ごとに変えられるようにした）
+  const goalOpts = React.useMemo(() => {
+    const u = (ctx.units || []).find(x => String(x.key) === String(lessonKey));
+    const perLesson = u ? String(u.goal_options == null ? '' : u.goal_options).trim() : '';
+    const src = perLesson !== ''
+      ? perLesson
+      : String((ctx.settings && ctx.settings.goal_options) || U.DEFAULT_GOAL_OPTIONS);
+    return src.split(',').map(s => s.trim()).filter(Boolean);
+  }, [ctx.settings, ctx.units, lessonKey]);
   const [goalOption, setGoalOption] = React.useState('');
   const [goalText, setGoalText] = React.useState('');
   const [reflection, setReflection] = React.useState('');
@@ -769,23 +804,23 @@ function GoalScreen({ ctx }) {
           )}
 
           <div className="card">
-            <div className="lbl"><span className="no">2</span>今日の目標（まず選ぶ）</div>
+            <div className="lbl"><span className="no">2</span>{T('label_goal')}</div>
             <div className="sel" style={{ minWidth: 0 }}>
               <select value={goalOption} onChange={(e) => setGoalOption(e.target.value)}>
                 <option value="">（選んでください）</option>
                 {goalOpts.map(o => <option key={o} value={o}>{o}</option>)}
               </select>
             </div>
-            <div className="lbl" style={{ marginTop: 16 }}><span className="no">＋</span>目標の補足・自由記述（任意）</div>
+            <div className="lbl" style={{ marginTop: 16 }}><span className="no">＋</span>{T('label_goal_note')}</div>
             <textarea className="q-area" style={{ minHeight: 60 }} value={goalText}
-              placeholder="選んだ目標についての自分の言葉での補足（例：図を使いながら理解したい）"
+              placeholder={T('ph_goal_note')}
               onChange={(e) => setGoalText(e.target.value)} />
           </div>
 
           <div className="card">
-            <div className="lbl"><span className="no">3</span>授業の振り返り（授業の最後に）</div>
+            <div className="lbl"><span className="no">3</span>{T('label_reflection')}</div>
             <textarea className="q-area" style={{ minHeight: 130 }} value={reflection}
-              placeholder="今日わかったこと・できたこと、難しかったこと、次にやりたいこと など"
+              placeholder={T('ph_reflection')}
               onChange={(e) => setReflection(e.target.value)} />
             <div style={{ marginTop: 16, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
               <button className="btn green lg" onClick={save} disabled={saving}>{saving ? '保存中…' : '保存する'}</button>
@@ -801,7 +836,7 @@ function GoalScreen({ ctx }) {
         </div>
 
         <div className="ref-wrap">
-          <HintCard />
+          <HintCard ctx={ctx} />
           <RefPanel mode={refMode} setMode={setRefMode} lessonKey={lessonKey} ctx={ctx} version={refVersion} />
         </div>
       </div>
@@ -1155,7 +1190,7 @@ function AdminScreen({ ctx }) {
   const [roster, setRoster] = React.useState([]);
   const [teachers, setTeachers] = React.useState([]);
   const [imp, setImp] = React.useState(null);
-  const [nu, setNu] = React.useState({ chapter: '', unit: '', lesson_no: '', lesson_title: '', sort_order: '0', goal: '', grade: '' });
+  const [nu, setNu] = React.useState({ chapter: '', unit: '', lesson_no: '', lesson_title: '', sort_order: '0', goal: '', grade: '', goal_options: '' });
   const [bulkUnits, setBulkUnits] = React.useState('');
   const [bulkMsg, setBulkMsg] = React.useState('');
   const [nr, setNr] = React.useState({ email: '', name: '', grade: '', class: '', number: '' });
@@ -1181,12 +1216,13 @@ function AdminScreen({ ctx }) {
     const payload = {
       chapter: Number(nu.chapter), unit: nu.unit.trim(), lesson_no: Number(nu.lesson_no),
       lesson_title: nu.lesson_title.trim(), sort_order: Number(nu.sort_order || 0),
-      goal: (nu.goal || '').trim(), grade: (nu.grade || '').trim()
+      goal: (nu.goal || '').trim(), grade: (nu.grade || '').trim(),
+      goal_options: (nu.goal_options || '').trim()
     };
     window.API.call('addUnit', payload).then(r => {
       if (r && r.error) { toast(r.error, '!'); return; }
       toast('単元を追加しました', '');
-      setNu({ chapter: nu.chapter, unit: '', lesson_no: '', lesson_title: '', sort_order: nu.sort_order, goal: '', grade: nu.grade });
+      setNu({ chapter: nu.chapter, unit: '', lesson_no: '', lesson_title: '', sort_order: nu.sort_order, goal: '', grade: nu.grade, goal_options: nu.goal_options });
       afterUnitsChange();
     }).catch(err => toast('追加に失敗：' + (err && err.message || err), '!'));
   }
@@ -1325,9 +1361,17 @@ function AdminScreen({ ctx }) {
         </div>
         <p className="page-sub" style={{ margin: '6px 0 0' }}>※ここに入れると、生徒の「目標設定と振り返り」画面で<b>その授業を選んだときに表示</b>されます（生徒が見ながら自分の目標を決められます）。</p>
         <p className="page-sub" style={{ margin: '4px 0 0' }}>※<b>学年</b>を選ぶと、<b>その学年の生徒にだけ</b>この単元が表示されます（他学年の生徒には出ません）。<b>「全学年」のままなら、これまでどおり全員に表示</b>されます。先生はどの学年の単元も見られます。</p>
+        <div className="row" style={{ marginTop: 8 }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <label className="fld">目標の選択肢（任意・カンマ区切り）</label>
+            <input className="in" value={nu.goal_options} onChange={(e) => setNu(Object.assign({}, nu, { goal_options: e.target.value }))}
+              placeholder="例）A：正しい音程で歌える,B：パートの役割を理解する" />
+          </div>
+        </div>
+        <p className="page-sub" style={{ margin: '4px 0 0' }}>※<b>この授業だけ</b>目標の選択肢を変えたいときに入れます。<b>空欄なら、下のDで設定した共通の選択肢</b>が使われます。</p>
 
         <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', margin: '24px 0 8px' }}>一括追加（TSV貼付）</div>
-        <p className="page-sub" style={{ marginBottom: 8 }}>7列タブ区切り：<b>章 ⇥ 単元名 ⇥ 第N時 ⇥ 授業内容 ⇥ 並び順 ⇥ 本時のゴール（任意） ⇥ 学年（任意）</b>。Excel／スプレッドシートの範囲をコピー→貼付→一括追加。同じ単元はスキップ（<b>ゴールだけは上書き更新</b>）。<b>学年</b>は空欄なら全学年に表示されます。</p>
+        <p className="page-sub" style={{ marginBottom: 8 }}>8列タブ区切り：<b>章 ⇥ 単元名 ⇥ 第N時 ⇥ 授業内容 ⇥ 並び順 ⇥ 本時のゴール（任意） ⇥ 学年（任意） ⇥ 目標の選択肢（任意・カンマ区切り）</b>。Excel／スプレッドシートの範囲をコピー→貼付→一括追加。同じ単元はスキップ（<b>ゴールだけは上書き更新</b>）。<b>学年</b>は空欄なら全学年に表示されます。</p>
         <textarea className="ta" placeholder={"1\t正負の数\t1\t正負の数とは\t1\t正の数・負の数の意味を説明できる\t1\n1\t正負の数\t2\t数直線と絶対値\t2\t数直線で大小を比べられる\t1"} value={bulkUnits} onChange={(e) => setBulkUnits(e.target.value)} />
         <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn green sm" onClick={addBulkUnits}>一括追加</button>
@@ -1407,17 +1451,94 @@ function AdminScreen({ ctx }) {
 
       <div className="card">
         <div className="lbl"><span className="no">D</span>目標の選択肢（ドロップダウン）</div>
-        <p className="page-sub" style={{ marginBottom: 8 }}>「目標設定と振り返り」のドロップダウン候補をカンマ区切りで編集できます。改行はカンマと同じ扱い。</p>
+        <p className="page-sub" style={{ marginBottom: 8 }}>「目標設定と振り返り」のドロップダウン候補をカンマ区切りで編集できます。改行はカンマと同じ扱い。<b>ここは全授業共通</b>です（授業ごとに変えたいときは、上のAの単元マスタにある「目標の選択肢」に入れると、その授業だけ上書きされます）。</p>
         <textarea className="ta" style={{ fontFamily: 'inherit' }} value={goalOptionsText} onChange={(e) => setGoalOptionsText(e.target.value)} />
         <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn blue sm" onClick={saveGoalOptions}>保存</button>
           <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{goalMsg}</span>
         </div>
       </div>
+
+      <ScreenTextEditor ctx={ctx} />
     </div>
   );
 }
 window.AdminScreen = AdminScreen;
+
+/** 画面の文言エディタ（先生が「目標と振り返り」画面の言葉を自分の教科に合わせて変えられる）
+ *  空欄にすれば既定文言に戻る＝間違えても元に戻せる。 */
+function ScreenTextEditor({ ctx }) {
+  const U = window.NoteUtil;
+  const { toast } = U;
+  const FIELDS = [
+    ['label_goal', '見出し：目標', 'input'],
+    ['label_goal_note', '見出し：目標の補足', 'input'],
+    ['label_reflection', '見出し：振り返り', 'input'],
+    ['ph_goal_note', '入力例：目標の補足', 'area'],
+    ['ph_reflection', '入力例：振り返り', 'area'],
+    ['hint_title', 'ヒントの見出し', 'input'],
+    ['hint_lines', 'ヒントの中身（1行に1つ／空にするとヒントごと消えます）', 'area']
+  ];
+  const init = {};
+  FIELDS.forEach(([k]) => { init[k] = String((ctx.settings && ctx.settings[k]) || ''); });
+  const [vals, setVals] = React.useState(init);
+  const [msg, setMsg] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  function up(k, v) { setVals(o => Object.assign({}, o, { [k]: v })); }
+  function resetOne(k) { up(k, ''); }
+
+  function saveAll() {
+    setBusy(true); setMsg('保存中…');
+    // 変更があったものだけ順番に保存する（空文字で保存＝既定に戻す）
+    const keys = FIELDS.map(f => f[0]).filter(k => String(vals[k]) !== String(init[k]));
+    if (!keys.length) { setBusy(false); setMsg('変更はありません'); return; }
+    const step = (i) => {
+      if (i >= keys.length) {
+        setBusy(false); setMsg('保存しました');
+        toast('画面の文言を更新しました', '✓');
+        const patch = {}; keys.forEach(k => { patch[k] = vals[k]; });
+        ctx.updateSettings(patch);
+        return;
+      }
+      window.API.call('updateSetting', { key: keys[i], value: vals[keys[i]] })
+        .then(r => { if (r && r.error) { setBusy(false); setMsg(r.error); return; } step(i + 1); })
+        .catch(err => { setBusy(false); setMsg('保存に失敗：' + (err && err.message || err)); });
+    };
+    step(0);
+  }
+
+  return (
+    <div className="card">
+      <div className="lbl"><span className="no">E</span>画面の文言</div>
+      <p className="page-sub" style={{ marginBottom: 10 }}>
+        「目標と振り返り」画面の言葉を、自分の教科・校種に合わせて変えられます。
+        <b>空欄にすると、もとの文言に戻ります。</b>（例：小学校なら「今日の目標」→「めあて」）
+      </p>
+      {FIELDS.map(([k, label, kind]) => (
+        <div key={k} style={{ marginBottom: 12 }}>
+          <label className="fld" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {label}
+            <button className="btn ghost sm" style={{ padding: '1px 8px', fontSize: 11.5, marginLeft: 'auto' }}
+              onClick={() => resetOne(k)}>既定に戻す</button>
+          </label>
+          {kind === 'area'
+            ? <textarea className="ta" style={{ fontFamily: 'inherit', minHeight: k === 'hint_lines' ? 84 : 56 }}
+                value={vals[k]} placeholder={U.TEXT_DEFAULTS[k]} onChange={(e) => up(k, e.target.value)} />
+            : <input className="in" value={vals[k]} placeholder={U.TEXT_DEFAULTS[k]} onChange={(e) => up(k, e.target.value)} />}
+        </div>
+      ))}
+      <div style={{ marginTop: 6, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn blue sm" onClick={saveAll} disabled={busy}>保存</button>
+        <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{msg}</span>
+      </div>
+      <p className="page-sub" style={{ margin: '10px 0 0' }}>
+        ※うすい文字は「いまの既定の文言」です。変更後は上の「テストモード（生徒として見る）」で確認できます。
+      </p>
+    </div>
+  );
+}
+window.ScreenTextEditor = ScreenTextEditor;
   </script>
 
   <!-- ============================== ⑦ アプリ本体 ============================== -->
