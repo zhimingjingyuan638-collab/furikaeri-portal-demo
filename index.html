@@ -286,7 +286,10 @@ label.fld{display:block;font-size:11.5px;color:var(--text-3);margin:0 0 5px 1px;
       { key: '1-正負の数-1', chapter: 1, unit: '正負の数', lesson_no: 1, lesson_title: '正負の数', sort_order: 1 },
       { key: '1-正負の数-3', chapter: 1, unit: '正負の数', lesson_no: 3, lesson_title: '加法と減法', sort_order: 3 },
       { key: '2-文字の式-1', chapter: 2, unit: '文字の式', lesson_no: 1, lesson_title: '文字式の表し方', sort_order: 1, goal: '文字を使って数量を式に表せる' },
-      { key: '3-一次方程式-2', chapter: 3, unit: '一次方程式', lesson_no: 2, lesson_title: '方程式の解き方', sort_order: 2 }
+      { key: '3-一次方程式-2', chapter: 3, unit: '一次方程式', lesson_no: 2, lesson_title: '方程式の解き方', sort_order: 2 },
+      // ↓ 学年ごとの分離を確認するためのサンプル（同じ章・同じ単元名でも学年が違えば別の単元になる）
+      { key: 'G1-4-データの活用-1', chapter: 4, unit: 'データの活用', lesson_no: 1, lesson_title: '度数分布表', sort_order: 1, grade: '1' },
+      { key: 'G2-4-データの活用-1', chapter: 4, unit: 'データの活用', lesson_no: 1, lesson_title: '箱ひげ図', sort_order: 1, grade: '2' }
     ],
     reflections: [
       { id: 'r1', created_at: '2026-06-01T01:00:00Z', updated_at: '2026-06-02T01:00:00Z',
@@ -358,7 +361,16 @@ label.fld{display:block;font-size:11.5px;color:var(--text-3);margin:0 0 5px 1px;
       });
       return mDelay({ success: true, saved: saved });
     },
-    getUnitsMaster: function () { return mDelay(mockStore.units); },
+    getUnitsMaster: function () {
+      // 本番(Code.js)と同じ絞り込み：生徒は自分の学年＋学年未設定の単元だけ。先生は全部見える。
+      var u = _demoUser();
+      var rows = mockStore.units;
+      if (!u.isTeacher && String(u.grade || '') !== '') {
+        var mg = String(u.grade).trim();
+        rows = rows.filter(function (r) { var g = String(r.grade == null ? '' : r.grade).trim(); return g === '' || g === mg; });
+      }
+      return mDelay(rows);
+    },
     addUnit: function () { return mDelay({ success: true }); },
     bulkAddUnits: function () { return mDelay({ success: true, added: 0, skipped: 0, errors: [] }); },
     deleteUnit: function () { return mDelay({ success: true }); },
@@ -447,26 +459,32 @@ label.fld{display:block;font-size:11.5px;color:var(--text-3);margin:0 0 5px 1px;
   function groupUnits(units) {
     var map = {}; var arr = [];
     (units || []).forEach(function (u) {
-      var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : u.grade;
-      var k = c + '|' + u.unit;
-      if (!map[k]) { map[k] = { groupKey: k, label: '第' + c + '章 ' + u.unit, chapter: Number(c) || 0, unit: u.unit, lessons: [] }; arr.push(map[k]); }
-      map[k].lessons.push({ key: u.key, lesson_no: u.lesson_no, lesson_title: u.lesson_title || '', sort_order: Number(u.sort_order) || 0 });
+      // ※ grade は「学年」なので章の代わりには使わない（旧仕様の名残を除去）
+      var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : '';
+      var g = String(u.grade == null ? '' : u.grade).trim();
+      // 学年が違えば別グループにする（同じ章・単元名でも学年ごとに分けて表示するため）
+      var k = g + '#' + c + '|' + u.unit;
+      if (!map[k]) { map[k] = { groupKey: k, label: (g ? g + '年 ' : '') + '第' + c + '章 ' + u.unit, chapter: Number(c) || 0, unit: u.unit, grade: g, lessons: [] }; arr.push(map[k]); }
+      map[k].lessons.push({ key: u.key, lesson_no: u.lesson_no, lesson_title: u.lesson_title || '', sort_order: Number(u.sort_order) || 0, grade: g });
     });
     arr.forEach(function (g) { g.lessons.sort(function (a, b) { return a.sort_order - b.sort_order || (Number(a.lesson_no) || 0) - (Number(b.lesson_no) || 0); }); });
-    arr.sort(function (a, b) { return a.chapter - b.chapter || String(a.unit).localeCompare(String(b.unit)); });
+    arr.sort(function (a, b) { return (Number(a.grade) || 0) - (Number(b.grade) || 0) || a.chapter - b.chapter || String(a.unit).localeCompare(String(b.unit)); });
     return arr;
   }
   function unitLabel(units, key) {
     var u = (units || []).find(function (x) { return String(x.key) === String(key); });
     if (!u) return key || '';
-    var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : u.grade;
-    return (c ? '第' + c + '章 ' : '') + (u.unit || '') + (u.lesson_no ? ' / 第' + u.lesson_no + '時' : '') + (u.lesson_title ? ' ' + u.lesson_title : '');
+    var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : '';
+    var g = String(u.grade == null ? '' : u.grade).trim();
+    return (g ? g + '年 ' : '') + (c ? '第' + c + '章 ' : '') + (u.unit || '') + (u.lesson_no ? ' / 第' + u.lesson_no + '時' : '') + (u.lesson_title ? ' ' + u.lesson_title : '');
   }
   function groupKeyOf(units, lessonKey) {
     var u = (units || []).find(function (x) { return String(x.key) === String(lessonKey); });
     if (!u) return '';
-    var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : u.grade;
-    return c + '|' + u.unit;
+    // groupUnits が作る groupKey と同じ形（学年込み）にそろえる
+    var c = (u.chapter !== undefined && u.chapter !== '') ? u.chapter : '';
+    var g = String(u.grade == null ? '' : u.grade).trim();
+    return g + '#' + c + '|' + u.unit;
   }
   function fmtDate(s) {
     try { var d = new Date(s); if (isNaN(d.getTime())) return ''; return d.toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; }
@@ -1137,7 +1155,7 @@ function AdminScreen({ ctx }) {
   const [roster, setRoster] = React.useState([]);
   const [teachers, setTeachers] = React.useState([]);
   const [imp, setImp] = React.useState(null);
-  const [nu, setNu] = React.useState({ chapter: '', unit: '', lesson_no: '', lesson_title: '', sort_order: '0', goal: '' });
+  const [nu, setNu] = React.useState({ chapter: '', unit: '', lesson_no: '', lesson_title: '', sort_order: '0', goal: '', grade: '' });
   const [bulkUnits, setBulkUnits] = React.useState('');
   const [bulkMsg, setBulkMsg] = React.useState('');
   const [nr, setNr] = React.useState({ email: '', name: '', grade: '', class: '', number: '' });
@@ -1163,12 +1181,12 @@ function AdminScreen({ ctx }) {
     const payload = {
       chapter: Number(nu.chapter), unit: nu.unit.trim(), lesson_no: Number(nu.lesson_no),
       lesson_title: nu.lesson_title.trim(), sort_order: Number(nu.sort_order || 0),
-      goal: (nu.goal || '').trim()
+      goal: (nu.goal || '').trim(), grade: (nu.grade || '').trim()
     };
     window.API.call('addUnit', payload).then(r => {
       if (r && r.error) { toast(r.error, '!'); return; }
       toast('単元を追加しました', '');
-      setNu({ chapter: nu.chapter, unit: '', lesson_no: '', lesson_title: '', sort_order: nu.sort_order, goal: '' });
+      setNu({ chapter: nu.chapter, unit: '', lesson_no: '', lesson_title: '', sort_order: nu.sort_order, goal: '', grade: nu.grade });
       afterUnitsChange();
     }).catch(err => toast('追加に失敗：' + (err && err.message || err), '!'));
   }
@@ -1280,6 +1298,17 @@ function AdminScreen({ ctx }) {
 
         <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', marginBottom: 8 }}>1件ずつ追加</div>
         <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: '0 0 108px' }}>
+            <label className="fld">学年</label>
+            <div className="sel" style={{ minWidth: 0 }}>
+              <select value={nu.grade} onChange={(e) => setNu(Object.assign({}, nu, { grade: e.target.value }))}>
+                <option value="">全学年</option>
+                <option value="1">1年</option>
+                <option value="2">2年</option>
+                <option value="3">3年</option>
+              </select>
+            </div>
+          </div>
           <div style={{ flex: '0 0 70px' }}><label className="fld">章</label><input className="in" type="number" min="1" value={nu.chapter} onChange={(e) => setNu(Object.assign({}, nu, { chapter: e.target.value }))} placeholder="1" /></div>
           <div style={{ flex: 2, minWidth: 130 }}><label className="fld">単元名</label><input className="in" value={nu.unit} onChange={(e) => setNu(Object.assign({}, nu, { unit: e.target.value }))} placeholder="正負の数" /></div>
           <div style={{ flex: '0 0 80px' }}><label className="fld">第N時</label><input className="in" type="number" min="1" value={nu.lesson_no} onChange={(e) => setNu(Object.assign({}, nu, { lesson_no: e.target.value }))} placeholder="3" /></div>
@@ -1295,10 +1324,11 @@ function AdminScreen({ ctx }) {
           </div>
         </div>
         <p className="page-sub" style={{ margin: '6px 0 0' }}>※ここに入れると、生徒の「目標設定と振り返り」画面で<b>その授業を選んだときに表示</b>されます（生徒が見ながら自分の目標を決められます）。</p>
+        <p className="page-sub" style={{ margin: '4px 0 0' }}>※<b>学年</b>を選ぶと、<b>その学年の生徒にだけ</b>この単元が表示されます（他学年の生徒には出ません）。<b>「全学年」のままなら、これまでどおり全員に表示</b>されます。先生はどの学年の単元も見られます。</p>
 
         <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)', margin: '24px 0 8px' }}>一括追加（TSV貼付）</div>
-        <p className="page-sub" style={{ marginBottom: 8 }}>6列タブ区切り：<b>章 ⇥ 単元名 ⇥ 第N時 ⇥ 授業内容 ⇥ 並び順 ⇥ 本時のゴール（任意）</b>。Excel／スプレッドシートの範囲をコピー→貼付→一括追加。同じ単元はスキップ（<b>ゴールだけは上書き更新</b>）。</p>
-        <textarea className="ta" placeholder={"1\t正負の数\t1\t正負の数とは\t1\t正の数・負の数の意味を説明できる\n1\t正負の数\t2\t数直線と絶対値\t2\t数直線で大小を比べられる"} value={bulkUnits} onChange={(e) => setBulkUnits(e.target.value)} />
+        <p className="page-sub" style={{ marginBottom: 8 }}>7列タブ区切り：<b>章 ⇥ 単元名 ⇥ 第N時 ⇥ 授業内容 ⇥ 並び順 ⇥ 本時のゴール（任意） ⇥ 学年（任意）</b>。Excel／スプレッドシートの範囲をコピー→貼付→一括追加。同じ単元はスキップ（<b>ゴールだけは上書き更新</b>）。<b>学年</b>は空欄なら全学年に表示されます。</p>
+        <textarea className="ta" placeholder={"1\t正負の数\t1\t正負の数とは\t1\t正の数・負の数の意味を説明できる\t1\n1\t正負の数\t2\t数直線と絶対値\t2\t数直線で大小を比べられる\t1"} value={bulkUnits} onChange={(e) => setBulkUnits(e.target.value)} />
         <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn green sm" onClick={addBulkUnits}>一括追加</button>
           <span className="hand" style={{ fontSize: 12.5, color: 'var(--ink2)' }}>{bulkMsg}</span>
@@ -1313,6 +1343,7 @@ function AdminScreen({ ctx }) {
                 {g.lessons.map(l => (
                   <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '3px 0' }}>
                     <span style={{ color: 'var(--ink2)' }}>第{l.lesson_no}時</span><span>{l.lesson_title}</span>
+                    <span className="chip">{String(l.grade || '').trim() ? String(l.grade).trim() + '年' : '全学年'}</span>
                     <button className="btn ghost sm" style={{ marginLeft: 'auto', padding: '3px 8px' }} onClick={() => delUnit(l.key)}>削除</button>
                   </div>
                 ))}
